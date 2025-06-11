@@ -10,9 +10,9 @@ uploaded_file = st.file_uploader("Escolha a planilha (.xlsx):", type=["xlsx"])
 if uploaded_file:
     df = pd.read_excel(uploaded_file, header=0)
     df = df.dropna(axis=1, how='all')
+    df.columns = df.columns.str.strip()
 
-    # Verifica se colunas essenciais existem
-    col_necessarias = ['CarAlias', 'SessionDate', 'Run', 'TrackName', 'SessionName', 'Lap']
+    col_necessarias = ['CarAlias', 'SessionDate', 'Run', 'TrackName', 'DriverName', 'SessionName', 'Lap']
     if not all(c in df.columns for c in col_necessarias):
         st.error("❌ Planilha não contém as colunas obrigatórias:\n" + ", ".join(col_necessarias))
     else:
@@ -29,7 +29,6 @@ if uploaded_file:
         tracks = ["TODAS"] + sorted(df['TrackName'].dropna().unique())
         selected_track = st.sidebar.selectbox("Etapa (TrackName):", tracks)
 
-        # Detectar colunas numéricas (métricas)
         col_excluir = col_necessarias + ['SessionLapDate']
         metricas = df.select_dtypes(include='number').columns.difference(col_excluir).tolist()
 
