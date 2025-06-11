@@ -10,15 +10,15 @@ uploaded_file = st.file_uploader("Escolha a planilha (.xlsx):", type=["xlsx"])
 if uploaded_file:
     df = pd.read_excel(uploaded_file, header=0)
     df = df.dropna(axis=1, how='all')
-    df.columns = df.columns.str.strip()
+    df.columns = df.columns.map(str).str.strip()
 
     col_necessarias = ['caralias', 'sessiondate', 'run', 'trackname', 'drivername', 'sessionname', 'lap']
-    colunas_lower = [c.lower() for c in df.columns]
-    if not all(c in colunas_lower for c in col_necessarias):
+    colunas_normalizadas = [c.strip().lower() for c in df.columns]
+    if not all(c in colunas_normalizadas for c in col_necessarias):
         st.error("❌ Planilha não contém as colunas obrigatórias:\n" + ", ".join(col_necessarias))
     else:
-        # Mapear nomes originais com base em lower
-        col_map = {c.lower(): c for c in df.columns}
+        col_map = {c.strip().lower(): c for c in df.columns}
+
         df['SessionLapDate'] = (
             df[col_map['sessiondate']].astype(str) +
             ' | Run ' + df[col_map['run']].astype(str) +
