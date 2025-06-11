@@ -5,10 +5,19 @@ import plotly.express as px
 st.set_page_config(layout="wide")
 st.title("KPI VITAIS - Análise Dinâmica")
 
-uploaded_file = st.file_uploader("Escolha a planilha adaptada (CSV):", type=["csv"])
+uploaded_file = st.file_uploader("Escolha a planilha (.xlsx):", type=["xlsx"])
 
 if uploaded_file:
-    df = pd.read_csv(uploaded_file)
+    df = pd.read_excel(uploaded_file, sheet_name=0, header=1)
+    df = df.dropna(axis=1, how='all')
+
+    # Renomear colunas principais
+    main_cols = [
+        "Slot", "CarAlias", "SessionDate", "Run", "TrackName",
+        "DriverName", "SessionName", "Lap", "LapTime", "SessionComment"
+    ]
+    metric_cols = [f"Metric_{i+1}" for i in range(df.shape[1] - len(main_cols))]
+    df.columns = main_cols + metric_cols
 
     df['SessionLapDate'] = (
         df['SessionDate'].astype(str) +
@@ -35,14 +44,12 @@ if uploaded_file:
     for y, title in zip([y1, y2], ["Gráfico 1", "Gráfico 2"]):
         fig = px.line(filtered, x='SessionLapDate', y=y, color='TrackName', markers=True, title=title)
         fig.update_layout(title_font=dict(size=40, color="white"), height=600)
-
         st.plotly_chart(fig, use_container_width=True)
         with st.expander(f"Estatísticas de {y}"):
             st.metric("Mínimo", round(filtered[y].min(), 2))
             st.metric("Máximo", round(filtered[y].max(), 2))
             st.metric("Média", round(filtered[y].mean(), 2))
 
-    # Gráfico de Dispersão
     st.sidebar.header("Dispersão")
     x_metric = st.sidebar.selectbox("Métrica X:", metrics)
     y_metric = st.sidebar.selectbox("Métrica Y:", metrics)
@@ -55,5 +62,6 @@ if uploaded_file:
     )
     fig3.update_layout(title_font=dict(size=40, color="white"), height=600)
     st.plotly_chart(fig3, use_container_width=True)
+
 else:
-    st.info("Envie o arquivo CSV gerado para iniciar a análise.")
+    st.info("Envie uma planilha .xlsx para iniciar a análise.")
