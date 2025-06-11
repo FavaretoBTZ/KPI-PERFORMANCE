@@ -8,57 +8,59 @@ st.title("KPI VITAIS - Análise Dinâmica")
 uploaded_file = st.file_uploader("Escolha a planilha (.xlsx):", type=["xlsx"])
 
 if uploaded_file:
-    # Lê com cabeçalho da primeira linha
-    df = pd.read_excel(uploaded_file, sheet_name=0, header=0)
-    df = df.dropna(axis=1, how='all')  # Remove colunas totalmente vazias
+    df = pd.read_excel(uploaded_file, header=0)
+    df = df.dropna(axis=1, how='all')
 
-    df['SessionLapDate'] = (
-        df['SessionDate'].astype(str) +
-        ' | Run ' + df['Run'].astype(str) +
-        ' | Lap ' + df['Lap'].astype(str) +
-        ' | ' + df['SessionName'].astype(str) +
-        ' | Track ' + df['TrackName'].astype(str)
-    )
+    # Verifica se colunas essenciais existem
+    col_necessarias = ['CarAlias', 'SessionDate', 'Run', 'TrackName', 'SessionName', 'Lap']
+    if not all(c in df.columns for c in col_necessarias):
+        st.error("❌ Planilha não contém as colunas obrigatórias:\n" + ", ".join(col_necessarias))
+    else:
+        df['SessionLapDate'] = (
+            df['SessionDate'].astype(str) +
+            ' | Run ' + df['Run'].astype(str) +
+            ' | Lap ' + df['Lap'].astype(str) +
+            ' | ' + df['SessionName'].astype(str) +
+            ' | Track ' + df['TrackName'].astype(str)
+        )
 
-    st.sidebar.header("Filtros Line Plot")
-    car_alias = st.sidebar.selectbox("CarAlias:", df['CarAlias'].unique())
-    tracks = ["TODAS"] + sorted(df['TrackName'].dropna().unique())
-    selected_track = st.sidebar.selectbox("Etapa (TrackName):", tracks)
+        st.sidebar.header("Filtros Line Plot")
+        car_alias = st.sidebar.selectbox("CarAlias:", df['CarAlias'].unique())
+        tracks = ["TODAS"] + sorted(df['TrackName'].dropna().unique())
+        selected_track = st.sidebar.selectbox("Etapa (TrackName):", tracks)
 
-    # Colunas numéricas, excluindo colunas básicas
-    basic_cols = ['CarAlias', 'SessionDate', 'Run', 'TrackName', 'SessionName', 'Lap', 'SessionLapDate']
-    numeric_cols = df.select_dtypes(include='number').columns.difference(basic_cols).tolist()
+        # Detectar colunas numéricas (métricas)
+        col_excluir = col_necessarias + ['SessionLapDate']
+        metricas = df.select_dtypes(include='number').columns.difference(col_excluir).tolist()
 
-    y1 = st.sidebar.selectbox("Métrica para Gráfico 1:", numeric_cols)
-    y2 = st.sidebar.selectbox("Métrica para Gráfico 2:", numeric_cols)
+        y1 = st.sidebar.selectbox("Métrica para Gráfico 1:", metricas)
+        y2 = st.sidebar.selectbox("Métrica para Gráfico 2:", metricas)
 
-    filtered = df[df['CarAlias'] == car_alias]
-    if selected_track != "TODAS":
-        filtered = filtered[filtered['TrackName'] == selected_track]
+        df_filtrado = df[df['CarAlias'] == car_alias]
+        if selected_track != "TODAS":
+            df_filtrado = df_filtrado[df_filtrado['TrackName'] == selected_track]
 
-    filtered = filtered.sort_values(by=['SessionDate', 'Run', 'Lap'])
+        df_filtrado = df_filtrado.sort_values(by=['SessionDate', 'Run', 'Lap'])
 
-    for y, title in zip([y1, y2], ["Gráfico 1", "Gráfico 2"]):
-        fig = px.line(filtered, x='SessionLapDate', y=y, color='TrackName', markers=True, title=title)
-        fig.update_layout(title_font=dict(size=40, color="white"), height=600)
-        st.plotly_chart(fig, use_container_width=True)
-        with st.expander(f"Estatísticas de {y}"):
-            st.metric("Mínimo", round(filtered[y].min(), 2))
-            st.metric("Máximo", round(filtered[y].max(), 2))
-            st.metric("Média", round(filtered[y].mean(), 2))
+        for y, titulo in zip([y1, y2], ["Gráfico 1", "Gráfico 2"]):
+            fig = px.line(df_filtrado, x='SessionLapDate', y=y, color='TrackName', markers=True, title=titulo)
+            fig.update_layout(title_font=dict(size=40, color="white"), height=600)
+            st.plotly_chart(fig, use_container_width=True)
+            with st.expander(f"Estatísticas de {y}"):
+                st.metric("Mínimo", round(df_filtrado[y].min(), 2))
+                st.metric("Máximo", round(df_filtrado[y].max(), 2))
+                st.metric("Média", round(df_filtrado[y].mean(), 2))
 
-    st.sidebar.header("Dispersão")
-    x_metric = st.sidebar.selectbox("Métrica X:", numeric_cols)
-    y_metric = st.sidebar.selectbox("Métrica Y:", numeric_cols)
-    show_trend = st.sidebar.checkbox("Mostrar linha de tendência")
+        st.sidebar.header("Dispersão")
+        x = st.sidebar.selectbox("Métrica X:", metricas)
+        y = st.sidebar.selectbox("Métrica Y:", metricas)
+        show_trend = st.sidebar.checkbox("Mostrar linha de tendência")
 
-    fig3 = px.scatter(
-        df, x=x_metric, y=y_metric, color='TrackName',
-        trendline="ols" if show_trend else None,
-        hover_data=['SessionName', 'Lap', 'Run'], title="Dispersão"
-    )
-    fig3.update_layout(title_font=dict(size=40, color="white"), height=600)
-    st.plotly_chart(fig3, use_container_width=True)
+        fig3 = px.scatter(df, x=x, y=y, color='TrackName',
+                          trendline="ols" if show_trend else None,
+                          hover_data=['SessionName', 'Lap', 'Run'], title="Dispersão")
+        fig3.update_layout(title_font=dict(size=40, color="white"), height=600)
+        st.plotly_chart(fig3, use_container_width=True)
 
 else:
     st.info("Envie uma planilha .xlsx para iniciar a análise.")
