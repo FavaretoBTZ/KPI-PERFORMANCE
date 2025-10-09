@@ -181,27 +181,43 @@ def sample_ticks(x_vals, x_texts, max_ticks=30):
     return [x_vals[i] for i in idx], [x_texts[i] for i in idx]
 
 # ---------------------------
-# Hover
+# Hover helpers
 # ---------------------------
-def line_hover_template(metric_title: str) -> str:
-    return (
-        f"<b>{metric_title}</b>: %{{y:.3f}}"
-        "<br><b>Lap - Info</b>: %{customdata[0]}"
-        "<br><b>SessionName - Info</b>: %{customdata[1]}"
-        "<br><b>Track</b>: %{customdata[2]}"
-        "<br><b>25ET5</b>: %{customdata[3]}"
-        "<br><b>25ET6</b>: %{customdata[4]}"
-        "<extra></extra>"
-    )
-
 def attach_custom_data(dfin: pd.DataFrame):
+    """Cria colunas auxiliares usadas para construir o hovertext."""
     dfin = dfin.copy()
     dfin["__lap_info"]   = dfin[lap_col].astype(str)
     dfin["__sess_info"]  = dfin[sessionname_col].astype(str)
     dfin["__track_info"] = dfin[trackname_col].astype(str)
     for opt in ["25ET5","25ET6"]:
         dfin[f"__{opt}"] = dfin[opt] if opt in dfin.columns else np.nan
-    return dfin, ["__lap_info","__sess_info","__track_info","__25ET5","__25ET6"]
+    return dfin
+
+def build_hovertext(dfin: pd.DataFrame, metric_col: str) -> list[str]:
+    """
+    Gera o texto do tooltip por ponto, omitindo 25ET5/25ET6 quando NaN.
+    """
+    y = pd.to_numeric(dfin[metric_col], errors='coerce')
+    lap  = dfin["__lap_info"].astype(str)
+    sess = dfin["__sess_info"].astype(str)
+    trk  = dfin["__track_info"].astype(str)
+    et5  = dfin["__25ET5"]
+    et6  = dfin["__25ET6"]
+
+    def fmt(v): 
+        return "—" if pd.isna(v) else f"{v:.3f}"
+
+    ht = (
+        "<b>" + metric_col + "</b>: " + y.map(fmt).astype(str) +
+        "<br><b>Lap - Info</b>: " + lap +
+        "<br><b>SessionName - Info</b>: " + sess +
+        "<br><b>Track</b>: " + trk
+    )
+
+    # acrescenta condicionalmente
+    with_et5 = np.where(et5.notna(), "<br><b>25ET5</b>: " + pd.to_numeric(et5, errors='coerce').map(fmt).astype(str), "")
+    with_et6 = np.where(et6.notna(), "<br><b>25ET6</b>: " + pd.to_numeric(et6, errors='coerce').map(fmt).astype(str), "")
+    return (ht + with_et5 + with_et6).tolist()
 
 # ---------------------------
 # Sidebar – blocos dos 8 gráficos (G7/G8 com comparação)
@@ -266,14 +282,16 @@ for i, cfg in cfgs:
         df_g = _order(df_g)
 
         if y_i in df_g.columns and not df_g.empty:
-            df_g, custom_cols = attach_custom_data(df_g)
+            df_g = attach_custom_data(df_g)
             x_vals = df_g['SessionLapDate'].tolist()
             x_texts = df_g['XLabelShort'].tolist()
             tickvals, ticktext = sample_ticks(x_vals, x_texts)
 
+            hovertext = build_hovertext(df_g, y_i)
+
             fig = px.line(df_g, x='SessionLapDate', y=y_i, color=sessionname_col,
-                          markers=True, title=y_i, custom_data=custom_cols)
-            fig.update_traces(hovertemplate=line_hover_template(y_i))
+                          markers=True, title=y_i)
+            fig.update_traces(hovertext=hovertext, hovertemplate="%{hovertext}<extra></extra>")
             fig.update_layout(
                 title_font=dict(size=40, color="white"),
                 height=600,
@@ -307,14 +325,16 @@ for i, cfg in cfgs:
         df_cmp = pd.concat([df_A, df_B], ignore_index=True)
 
         if y_i in df_cmp.columns and not df_cmp.empty:
-            df_cmp, custom_cols = attach_custom_data(df_cmp)
+            df_cmp = attach_custom_data(df_cmp)
             x_vals = df_cmp['SessionLapDate'].tolist()
             x_texts = df_cmp['XLabelShort'].tolist()
             tickvals, ticktext = sample_ticks(x_vals, x_texts)
 
+            hovertext = build_hovertext(df_cmp, y_i)
+
             fig = px.line(df_cmp, x='SessionLapDate', y=y_i, color="DriverSessionGroup",
-                          markers=True, title=y_i, custom_data=custom_cols)
-            fig.update_traces(hovertemplate=line_hover_template(y_i))
+                          markers=True, title=y_i)
+            fig.update_traces(hovertext=hovertext, hovertemplate="%{hovertext}<extra></extra>")
             fig.update_layout(
                 title_font=dict(size=40, color="white"),
                 height=600,
@@ -334,21 +354,14 @@ for i, cfg in cfgs:
 
 # Dispersão
 if x_disp in df.columns and y_disp in df.columns:
-    df_disp, custom_cols = attach_custom_data(df)
+    df_disp = attach_custom_data(df)
     fig_disp = px.scatter(
         df_disp, x=x_disp, y=y_disp, color=sessionname_col if sessionname_col in df.columns else None,
         trendline="ols" if trend else None,
         title=f"{x_disp} vs {y_disp}",
-        custom_data=custom_cols
     )
-    fig_disp.update_traces(hovertemplate=
-        "<b>X</b>: %{x}<br><b>Y</b>: %{y}"
-        "<br><b>Lap - Info</b>: %{customdata[0]}"
-        "<br><b>SessionName - Info</b>: %{customdata[1]}"
-        "<br><b>Track</b>: %{customdata[2]}"
-        "<br><b>25ET5</b>: %{customdata[3]}<br><b>25ET6</b>: %{customdata[4]}"
-        "<extra></extra>"
-    )
+    hovertext = build_hovertext(df_disp, y_disp)
+    fig_disp.update_traces(hovertext=hovertext, hovertemplate="%{hovertext}<extra></extra>")
     fig_disp.update_layout(
         title_font=dict(size=40, color="white"),
         height=600,
