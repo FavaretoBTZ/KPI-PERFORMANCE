@@ -493,12 +493,12 @@ if drivers_in_track:
                 # cria coluna vazia para manter a ordem exigida
                 out_cols.append(pd.Series([np.nan]*len(df_drv), index=df_drv.index, name=lbl))
         df_out = pd.concat(out_cols, axis=1)
-        # garante os nomes das colunas como os rótulos pedidos
-        df_out.columns = wanted_labels
+        df_out.columns = wanted_labels  # garante os nomes
 
         # cria o arquivo em memória e mostra botão de download
         buffer = BytesIO()
-        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        # >>>>>>> ALTERAÇÃO: engine="openpyxl" (sem xlsxwriter)
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             df_out.to_excel(writer, sheet_name="Dados", index=False)
         buffer.seek(0)
 
