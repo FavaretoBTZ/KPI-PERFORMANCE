@@ -4,6 +4,7 @@ import plotly.express as px
 import unicodedata, re
 from difflib import get_close_matches
 import numpy as np
+from io import BytesIO
 
 # =========================
 # Config
@@ -69,6 +70,10 @@ def resolve_columns(df: pd.DataFrame, req: list[str]) -> dict:
                 if hits: found = m[hits[0]]; break
         if found: out[key] = found
     return out
+
+def _find_col_exact(df: pd.DataFrame, label: str):
+    """Procura a coluna pelo rótulo exato (normalizado)."""
+    return _norm_map(df).get(_normalize(label))
 
 # =========================
 # App
@@ -436,3 +441,74 @@ for row_start in range(0, 9, 3):
                     with c3: st.metric("Média",  f"{vec.mean():.3f}" if vec.notna().any() else "—")
             else:
                 st.info("Sem dados para este conjunto de filtros.", key=f"info_{grid_key}")
+
+# =====================================================================
+# EXPORTAÇÃO NO FINAL: por Track selecionado -> 1 arquivo por Driver
+# =====================================================================
+st.markdown("---")
+st.header("Exportar planilhas por TrackName - Info (1 arquivo por Driver)")
+
+# opções de TrackName a partir do arquivo (não usa filtro da sidebar para dar liberdade)
+all_tracks = sorted(df[trackname_col].dropna().astype(str).unique().tolist())
+track_sel = st.selectbox("TrackName - Info (exportação):", all_tracks, index=0, key="export::track")
+
+# colunas de saída na ordem solicitada
+wanted_labels = [
+    "SessionName - Info", "LapTime - Info", "Tire - Info", "TrackName - Info",
+    "AccX -Min", "AccX -Max", "AccX -Avg",
+    "AccY -Min", "AccY -Max", "AccY -Avg",
+    "G_Comb -Max", "G_Comb -Avg",
+    "25_AcLat_Trigger -Avg",
+    "25_AcLong_Trigger_Positivo -Avg",
+    "25_AcLong_Trigger_Negativo -Avg",
+]
+
+# mapeia rótulo -> coluna real do DataFrame (se alguma faltar, cria vazia)
+col_map_export = {}
+for lbl in wanted_labels:
+    col_map_export[lbl] = _find_col_exact(df, lbl)
+
+# subset do DataFrame pelo Track selecionado
+df_track = df[df[trackname_col].astype(str) == str(track_sel)].copy()
+
+# lista de drivers nesse track
+drivers_in_track = sorted(df_track[drivername_col].dropna().astype(str).unique().tolist())
+
+def _sanitize_filename(s: str) -> str:
+    s = re.sub(r"[^\w\-. ]+", "_", s.strip())
+    return s[:120] if len(s) > 120 else s
+
+if drivers_in_track:
+    st.success(f"Gerando arquivos para {len(drivers_in_track)} driver(s) em **{track_sel}**:")
+    for drv in drivers_in_track:
+        df_drv = df_track[df_track[drivername_col].astype(str) == drv].copy()
+
+        # monta DataFrame de saída com as colunas na ordem pedida
+        out_cols = []
+        for lbl in wanted_labels:
+            c = col_map_export[lbl]
+            if c is not None and c in df_drv.columns:
+                out_cols.append(df_drv[c])
+            else:
+                # cria coluna vazia para manter a ordem exigida
+                out_cols.append(pd.Series([np.nan]*len(df_drv), index=df_drv.index, name=lbl))
+        df_out = pd.concat(out_cols, axis=1)
+        # garante os nomes das colunas como os rótulos pedidos
+        df_out.columns = wanted_labels
+
+        # cria o arquivo em memória e mostra botão de download
+        buffer = BytesIO()
+        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+            df_out.to_excel(writer, sheet_name="Dados", index=False)
+        buffer.seek(0)
+
+        fname = f"{_sanitize_filename(track_sel)}__{_sanitize_filename(drv)}.xlsx"
+        st.download_button(
+            label=f"Baixar planilha • Driver: {drv}",
+            data=buffer,
+            file_name=fname,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"dl::{track_sel}::{drv}"
+        )
+else:
+    st.info("Não há dados para o Track selecionado.")
