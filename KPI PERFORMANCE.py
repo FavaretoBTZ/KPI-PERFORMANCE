@@ -1,10 +1,10 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import unicodedata, re
+import unicodedata, re, os
 from difflib import get_close_matches
 import numpy as np
-from io import BytesIO
+from io import BytesIO  # ainda útil caso queira mudar para download futuramente
 
 # =========================
 # Config
@@ -443,10 +443,10 @@ for row_start in range(0, 9, 3):
                 st.info("Sem dados para este conjunto de filtros.", key=f"info_{grid_key}")
 
 # =====================================================================
-# EXPORTAÇÃO NO FINAL: por Track selecionado -> 1 arquivo por Driver
+# EXPORTAÇÃO NO FINAL: por Track selecionado -> GERA E SALVA AUTOMÁTICO
 # =====================================================================
 st.markdown("---")
-st.header("Exportar planilhas por TrackName - Info (1 arquivo por Driver)")
+st.header("Exportar planilhas por TrackName - Info (geração automática, sem download)")
 
 # opções de TrackName a partir do arquivo (não usa filtro da sidebar para dar liberdade)
 all_tracks = sorted(df[trackname_col].dropna().astype(str).unique().tolist())
@@ -478,8 +478,13 @@ def _sanitize_filename(s: str) -> str:
     s = re.sub(r"[^\w\-. ]+", "_", s.strip())
     return s[:120] if len(s) > 120 else s
 
+# pasta onde os arquivos serão salvos
+base_dir = os.path.join(".", "exports", _sanitize_filename(track_sel))
+os.makedirs(base_dir, exist_ok=True)
+
 if drivers_in_track:
-    st.success(f"Gerando arquivos para {len(drivers_in_track)} driver(s) em **{track_sel}**:")
+    st.success(f"Gerando arquivos para {len(drivers_in_track)} driver(s) em **{track_sel}** (salvos em `{base_dir}`):")
+    # gera e salva automaticamente
     for drv in drivers_in_track:
         df_drv = df_track[df_track[drivername_col].astype(str) == drv].copy()
 
@@ -495,20 +500,16 @@ if drivers_in_track:
         df_out = pd.concat(out_cols, axis=1)
         df_out.columns = wanted_labels  # garante os nomes
 
-        # cria o arquivo em memória e mostra botão de download
-        buffer = BytesIO()
-        # >>>>>>> ALTERAÇÃO: engine="openpyxl" (sem xlsxwriter)
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            df_out.to_excel(writer, sheet_name="Dados", index=False)
-        buffer.seek(0)
+        # caminho do arquivo
+        fname = f"{_sanitize_filename(drv)}.xlsx"
+        fpath = os.path.join(base_dir, fname)
 
-        fname = f"{_sanitize_filename(track_sel)}__{_sanitize_filename(drv)}.xlsx"
-        st.download_button(
-            label=f"Baixar planilha • Driver: {drv}",
-            data=buffer,
-            file_name=fname,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key=f"dl::{track_sel}::{drv}"
-        )
+        # salva direto no disco (sem botão de download)
+        with pd.ExcelWriter(fpath, engine="openpyxl") as writer:
+            df_out.to_excel(writer, sheet_name="Dados", index=False)
+
+        # mostra um resumo/preview
+        with st.expander(f"✅ Arquivo gerado: {fpath}"):
+            st.dataframe(df_out.head(5), use_container_width=True)
 else:
     st.info("Não há dados para o Track selecionado.")
