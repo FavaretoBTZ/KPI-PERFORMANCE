@@ -154,8 +154,8 @@ def _apply_filters(df_in, driver_sel, mode_sel, session_sel):
 def sidebar_block(i: int, metrics_list, enable_compare=False):
     """
     Retorna:
-      - 'single', y, driver, sess_mode, session
-      - 'compare', y, dA, mA, sA, dB, mB, sB
+      - ('single', y, driver, sess_mode, session)
+      - ('compare', y, dA, mA, sA, dB, mB, sB)
     """
     y = st.sidebar.selectbox(f"Métrica para Gráfico {i}:", metrics_list, key=f"g{i}::metric")
     st.sidebar.markdown("")
@@ -206,8 +206,7 @@ y_disp = st.sidebar.selectbox("Métrica Y:", metricas_all, key="disp::y")
 trend = st.sidebar.checkbox("Mostrar linha de tendência", key="disp::trend")
 
 # ---------------------------
-# Monta as 9 figuras e desenha em grid 3x3
-# (TÍTULO = MÉTRICA SELECIONADA; sem subheader duplicado)
+# Monta as 9 figuras e desenha em grid 3×3 (keys únicas para cada chart)
 # ---------------------------
 figs = []
 
@@ -221,7 +220,7 @@ for i, cfg in cfgs:
             fig = px.line(
                 df_g, x='SessionLapDate', y=y_i,
                 color=sessionname_col,  # cores por SessionName
-                markers=True, title=y_i  # <-- título = métrica
+                markers=True, title=y_i  # título = métrica
             )
             fig.update_layout(title_font=dict(size=40, color="white"),
                               height=600, legend_title_text=sessionname_col)
@@ -229,7 +228,7 @@ for i, cfg in cfgs:
                              categoryarray=df_g['SessionLapDate'].tolist())
         else:
             fig = None
-        figs.append((fig, df_g, y_i))
+        figs.append((i, fig, df_g, y_i))
 
     else:
         _, y_i, dA, mA, sA, dB, mB, sB = cfg
@@ -250,7 +249,7 @@ for i, cfg in cfgs:
             fig = px.line(
                 df_cmp, x='SessionLapDate', y=y_i,
                 color="DriverSessionGroup",
-                markers=True, title=y_i  # <-- título = métrica
+                markers=True, title=y_i  # título = métrica
             )
             fig.update_layout(title_font=dict(size=40, color="white"),
                               height=600, legend_title_text="Driver / Session")
@@ -258,7 +257,7 @@ for i, cfg in cfgs:
                              categoryarray=df_cmp['SessionLapDate'].tolist())
         else:
             fig = None
-        figs.append((fig, df_cmp, y_i))
+        figs.append((i, fig, df_cmp, y_i))
 
 # Dispersão (título = X vs Y)
 if x_disp in df.columns and y_disp in df.columns:
@@ -269,26 +268,27 @@ if x_disp in df.columns and y_disp in df.columns:
         hover_data=[sessionname_col if sessionname_col in df.columns else None,
                     lap_col if lap_col in df.columns else None,
                     run_col if run_col in df.columns else None],
-        title=f"{x_disp} vs {y_disp}"  # <-- título informativo
+        title=f"{x_disp} vs {y_disp}"
     )
     fig_disp.update_layout(title_font=dict(size=40, color="white"), height=600, legend_title_text=sessionname_col)
 else:
     fig_disp = None
 
-# Desenha em 3×3 (G1..G3 | G4..G6 | G7..G8 | Dispersão)
-all_figs = figs + [(fig_disp, None, None)]
+# Render em 3 linhas × 3 colunas — chave única por célula
+all_figs = figs + [(9, fig_disp, None, None)]  # 9º = dispersão
 for row_start in range(0, 9, 3):
     cols = st.columns(3)
     for j in range(3):
-        idx = row_start + j
-        fig_obj, df_used, y_used = all_figs[idx]
+        slot_idx = row_start + j  # 0..8
+        grid_key = f"grid_{row_start}_{j}"
+        fig_index, fig_obj, df_used, y_used = all_figs[slot_idx]
         with cols[j]:
             if fig_obj is not None:
-                st.plotly_chart(fig_obj, use_container_width=True)
+                st.plotly_chart(fig_obj, use_container_width=True, key=f"plot_{grid_key}_{fig_index}")
                 if df_used is not None and y_used is not None:
-                    c1,c2,c3 = st.columns(3)
+                    c1, c2, c3 = st.columns(3)
                     with c1: st.metric("Mínimo", f"{pd.to_numeric(df_used[y_used], errors='coerce').min():.2f}")
                     with c2: st.metric("Máximo", f"{pd.to_numeric(df_used[y_used], errors='coerce').max():.2f}")
                     with c3: st.metric("Média",  f"{pd.to_numeric(df_used[y_used], errors='coerce').mean():.2f}")
             else:
-                st.info("Sem dados para este conjunto de filtros.")
+                st.info("Sem dados para este conjunto de filtros.", key=f"info_{grid_key}")
