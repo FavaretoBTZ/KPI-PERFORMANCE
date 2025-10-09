@@ -98,26 +98,28 @@ trackname_col  = col_map['trackname']
 drivername_col = col_map['drivername']
 
 # ---------------------------
-# Campos auxiliares (ordem + rótulos)
+# XKey (completo) + XLabel (curto)
 # ---------------------------
 if pd.api.types.is_datetime64_any_dtype(df[sessiondate_col]):
-    sdate_str = df[sessiondate_col].dt.strftime("%Y-%m-%d %H:%M:%S").astype(str)
+    sdate = df[sessiondate_col].dt.strftime("%Y-%m-%d %H:%M:%S").astype(str)
 else:
     s_try = pd.to_datetime(df[sessiondate_col], errors='coerce')
-    sdate_str = s_try.dt.strftime("%Y-%m-%d %H:%M:%S").fillna(df[sessiondate_col].astype(str))
+    sdate = s_try.dt.strftime("%Y-%m-%d %H:%M:%S").fillna(df[sessiondate_col].astype(str))
 
-df['SessionLapDate'] = (
-    sdate_str +
-    ' | Run ' + df[run_col].astype(str) +
-    ' | Lap ' + df[lap_col].astype(str) +
-    ' | ' + df[sessionname_col].astype(str) +
-    ' | Track ' + df[trackname_col].astype(str)
+# XKey: usado para ORDENAR e como eixo X
+df["XKey"] = (
+    sdate +
+    " | Run " + df[run_col].astype(str) +
+    " | Lap " + df[lap_col].astype(str) +
+    " | " + df[sessionname_col].astype(str) +
+    " | Track " + df[trackname_col].astype(str)
 )
 
-df['XLabelShort'] = (
-    'Lap ' + df[lap_col].astype(str) +
-    ' | ' + df[sessionname_col].astype(str) +
-    ' | ' + df[trackname_col].astype(str)
+# XLabel: rótulo que aparece no eixo (sem SessionDate e Run)
+df["XLabel"] = (
+    "Lap " + df[lap_col].astype(str) +
+    " | " + df[sessionname_col].astype(str) +
+    " | " + df[trackname_col].astype(str)
 )
 
 # ---------------------------
@@ -128,7 +130,7 @@ car_alias = st.sidebar.selectbox("CarAlias:", sorted(df[col_map['caralias']].dro
 tracks = ["TODAS"] + sorted(pd.Series(df[trackname_col].dropna().astype(str).unique()).tolist())
 selected_track = st.sidebar.selectbox("Etapa (TrackName):", tracks)
 
-cols_excluir = [col_map[k] for k in required] + ['SessionLapDate', 'XLabelShort']
+cols_excluir = [col_map[k] for k in required] + ['XKey', 'XLabel']
 metricas = [c for c in df.select_dtypes(include='number').columns if c not in cols_excluir]
 if not metricas:
     metricas = df.select_dtypes(include='number').columns.tolist()
@@ -138,37 +140,36 @@ if selected_track != "TODAS":
     base = base[base[trackname_col].astype(str) == str(selected_track)]
 
 # ---------------------------
-# Utils
+# Utils (ordenação e ticks)
 # ---------------------------
-def _safe_num(s): return pd.to_numeric(s, errors='coerce')
 _num_pat = re.compile(r"[-+]?\d*[\.,]?\d+")
 
 def _extract_num_series(series: pd.Series) -> pd.Series:
     def _one(x):
         m = _num_pat.search(str(x))
         if not m: return np.nan
-        val = m.group(0).replace(",", ".")
-        try: return float(val)
-        except: return np.nan
+        return float(m.group(0).replace(",", "."))
     return series.map(_one)
 
 def _order(dfin: pd.DataFrame) -> pd.DataFrame:
+    """Ordem cronológica exata: SessionDate -> Run -> Lap -> SessionName -> TrackName."""
     sdate_ord = pd.to_datetime(dfin[sessiondate_col], errors='coerce')
-    run_num = _extract_num_series(dfin[run_col])
-    lap_num = _extract_num_series(dfin[lap_col])
+    run_ord   = _extract_num_series(dfin[run_col])
+    lap_ord   = _extract_num_series(dfin[lap_col])
+    sess_ord  = dfin[sessionname_col].astype(str)
+    track_ord = dfin[trackname_col].astype(str)
+    idx_orig  = np.arange(len(dfin))
     return dfin.assign(
         __sdate_ord=sdate_ord,
-        __run_ord=run_num,
-        __lap_ord=lap_num,
-    ).sort_values(by=["__sdate_ord","__run_ord","__lap_ord"], kind="mergesort")
-
-def _apply_filters(df_in, driver_sel, mode_sel, session_sel):
-    out = df_in
-    if driver_sel:
-        out = out[out[drivername_col].astype(str) == str(driver_sel)]
-        if mode_sel == "Apenas uma" and session_sel:
-            out = out[out[sessionname_col].astype(str) == str(session_sel)]
-    return out
+        __run_ord=run_ord,
+        __lap_ord=lap_ord,
+        __sess_ord=sess_ord,
+        __track_ord=track_ord,
+        __idx=idx_orig
+    ).sort_values(
+        by=["__sdate_ord","__run_ord","__lap_ord","__sess_ord","__track_ord","__idx"],
+        kind="mergesort"
+    )
 
 def sample_ticks(x_vals: list[str], x_texts: list[str], max_ticks: int = 30):
     n = len(x_vals)
@@ -181,7 +182,7 @@ def sample_ticks(x_vals: list[str], x_texts: list[str], max_ticks: int = 30):
     return [x_vals[i] for i in idx], [x_texts[i] for i in idx]
 
 # ---------------------------
-# Hover (texto construído por ponto, sem "null")
+# Hover (sem 25ET5/25ET6 nulos)
 # ---------------------------
 def build_hovertext(dfin: pd.DataFrame, metric_col: str) -> list[str]:
     y = pd.to_numeric(dfin[metric_col], errors='coerce')
@@ -194,7 +195,6 @@ def build_hovertext(dfin: pd.DataFrame, metric_col: str) -> list[str]:
         "<br><b>Track</b>: " + dfin[trackname_col].astype(str)
     )
 
-    # Acrescenta 25ET5/25ET6 somente se existirem e não forem NaN
     pieces = base.copy()
     if "25ET5" in dfin.columns:
         v = pd.to_numeric(dfin["25ET5"], errors='coerce')
@@ -219,15 +219,13 @@ def sidebar_block(i: int, metrics_list, enable_compare=False):
             sA = None
             if mA == "Apenas uma":
                 sessionsA = sorted(base[base[drivername_col].astype(str)==str(dA)][sessionname_col].dropna().astype(str).unique())
-                if sessionsA:
-                    sA = st.sidebar.selectbox(f"SessionName A (G{i}):", sessionsA, key=f"g{i}::sessA")
+                if sessionsA: sA = st.sidebar.selectbox(f"SessionName A (G{i}):", sessionsA, key=f"g{i}::sessA")
             dB = st.sidebar.selectbox(f"Driver B (G{i}):", drivers, key=f"g{i}::drvB")
             mB = st.sidebar.radio(f"Sessões B (G{i}):", ["Todas","Apenas uma"], index=0, horizontal=True, key=f"g{i}::modeB")
             sB = None
             if mB == "Apenas uma":
                 sessionsB = sorted(base[base[drivername_col].astype(str)==str(dB)][sessionname_col].dropna().astype(str).unique())
-                if sessionsB:
-                    sB = st.sidebar.selectbox(f"SessionName B (G{i}):", sessionsB, key=f"g{i}::sessB")
+                if sessionsB: sB = st.sidebar.selectbox(f"SessionName B (G{i}):", sessionsB, key=f"g{i}::sessB")
             st.sidebar.markdown("---")
             return ("compare", y, dA, mA, sA, dB, mB, sB)
     enable = st.sidebar.checkbox(f"Filtrar por Driver (G{i})", key=f"g{i}::enable")
@@ -238,8 +236,7 @@ def sidebar_block(i: int, metrics_list, enable_compare=False):
         mode = st.sidebar.radio(f"Sessões (G{i}):", ["Todas","Apenas uma"], index=0, horizontal=True, key=f"g{i}::mode")
         if mode == "Apenas uma":
             sessions = sorted(base[base[drivername_col].astype(str)==str(drv)][sessionname_col].dropna().astype(str).unique())
-            if sessions:
-                ses = st.sidebar.selectbox(f"SessionName (G{i}):", sessions, key=f"g{i}::session")
+            if sessions: ses = st.sidebar.selectbox(f"SessionName (G{i}):", sessions, key=f"g{i}::session")
     st.sidebar.markdown("---")
     return ("single", y, drv, (mode or "Todas"), ses)
 
@@ -268,66 +265,59 @@ legend_right = dict(
 )
 
 # ---------------------------
-# Plots (3×3)
+# Helpers de plot
 # ---------------------------
-figs = []
-
 def draw_line(df_plot, y_col, color_col, legend_title):
-    # ordem cronológica garantida
     df_plot = _order(df_plot)
     if y_col not in df_plot.columns or df_plot.empty:
         return None, df_plot
 
-    x_vals  = df_plot['SessionLapDate'].tolist()
-    x_texts = df_plot['XLabelShort'].tolist()
+    # eixo X categórico seguindo a ordem de XKey; rótulo mostrado = XLabel
+    x_vals  = df_plot['XKey'].tolist()    # ordem cronológica real
+    x_texts = df_plot['XLabel'].tolist()  # rótulos sem SessionDate/Run
     tickvals, ticktext = sample_ticks(x_vals, x_texts, max_ticks=30)
 
-    # cria a figura preservando a ordem categórica
-    fig = px.line(
-        df_plot, x='SessionLapDate', y=y_col,
-        color=color_col, markers=True, title=y_col
-    )
-    # tooltip limpo sem "null"
+    fig = px.line(df_plot, x='XKey', y=y_col, color=color_col, markers=True, title=y_col)
+
     hovertext = build_hovertext(df_plot, y_col)
     fig.update_traces(hovertext=hovertext, hovertemplate="%{hovertext}<extra></extra>")
 
-    fig.update_layout(
-        title_font=dict(size=40, color="white"),
-        height=600,
-        legend=legend_right,
-        legend_title_text=legend_title
-    )
-    fig.update_xaxes(
-        type='category',
-        categoryorder='array', categoryarray=x_vals,  # segue a ordem cronológica do DataFrame
-        tickmode='array', tickvals=tickvals, ticktext=ticktext
-    )
+    fig.update_layout(title_font=dict(size=40, color="white"), height=600,
+                      legend=legend_right, legend_title_text=legend_title)
+    fig.update_xaxes(type='category',
+                     categoryorder='array', categoryarray=x_vals,
+                     tickmode='array', tickvals=tickvals, ticktext=ticktext,
+                     title=None)
     return fig, df_plot
 
-# 8 gráficos (7 e 8 com comparação)
+# ---------------------------
+# Monta 8 gráficos (7 e 8 com comparação)
+# ---------------------------
+figs = []
 for i, cfg in cfgs:
     mode = cfg[0]
     if mode == "single":
         _, y_i, d_i, m_i, s_i = cfg
-        df_g = _apply_filters(base, d_i, m_i, s_i)
+        df_g = base.copy()
+        df_g = _apply_filters(df_g, d_i, m_i, s_i)
         fig, used = draw_line(df_g, y_i, sessionname_col, sessionname_col)
         figs.append((i, fig, used, y_i))
     else:
         _, y_i, dA, mA, sA, dB, mB, sB = cfg
-        df_A = _apply_filters(base, dA, mA, sA)
-        df_B = _apply_filters(base, dB, mB, sB)
-
+        df_A = _apply_filters(base.copy(), dA, mA, sA)
+        df_B = _apply_filters(base.copy(), dB, mB, sB)
         def add_group(dfin, label):
             if dfin.empty: return dfin
             d = dfin.copy()
             d["DriverSessionGroup"] = str(label) + " / " + d[sessionname_col].astype(str)
             return d
-
         df_cmp = pd.concat([add_group(df_A, dA), add_group(df_B, dB)], ignore_index=True)
         fig, used = draw_line(df_cmp, y_i, "DriverSessionGroup", "Driver / Session")
         figs.append((i, fig, used, y_i))
 
-# Dispersão
+# ---------------------------
+# Dispersão (usa X/Y numéricos escolhidos)
+# ---------------------------
 if x_disp in df.columns and y_disp in df.columns:
     df_disp = df.copy()
     fig_disp = px.scatter(
@@ -342,7 +332,9 @@ if x_disp in df.columns and y_disp in df.columns:
 else:
     fig_disp = None
 
+# ---------------------------
 # Render 3×3
+# ---------------------------
 all_figs = figs + [(9, fig_disp, None, None)]
 for row_start in range(0, 9, 3):
     cols = st.columns(3)
