@@ -5,9 +5,14 @@ import unicodedata, re
 from difflib import get_close_matches
 import numpy as np
 
-# ---------------------------
+# =========================
+# Config
+# =========================
+METRIC_BLACKLIST = {"DataSet - Slot"}  # ← remove essa métrica das seleções
+
+# =========================
 # Normalização de nomes
-# ---------------------------
+# =========================
 _SUFFIXES_TO_STRIP = ["info","min","max","avg","mean","median","std","ref","target"]
 
 def _normalize(s: str) -> str:
@@ -65,9 +70,9 @@ def resolve_columns(df: pd.DataFrame, req: list[str]) -> dict:
         if found: out[key] = found
     return out
 
-# ---------------------------
+# =========================
 # App
-# ---------------------------
+# =========================
 st.set_page_config(layout="wide")
 st.title("KPI VITAIS - Análise Dinâmica")
 
@@ -97,9 +102,9 @@ sessionname_col= col_map['sessionname']
 trackname_col  = col_map['trackname']
 drivername_col = col_map['drivername']
 
-# ---------------------------
+# =========================
 # XKey (completo) + XLabel (curto)
-# ---------------------------
+# =========================
 if pd.api.types.is_datetime64_any_dtype(df[sessiondate_col]):
     sdate = df[sessiondate_col].dt.strftime("%Y-%m-%d %H:%M:%S").astype(str)
 else:
@@ -120,30 +125,37 @@ df["XLabel"] = (
     " | " + df[trackname_col].astype(str)
 )
 
-# ---------------------------
+# =========================
 # Sidebar - Filtros gerais
-# ---------------------------
+# =========================
 st.sidebar.header("Filtros Line Plot")
 car_alias = st.sidebar.selectbox("CarAlias:", sorted(df[col_map['caralias']].dropna().astype(str).unique()))
 tracks = ["TODAS"] + sorted(pd.Series(df[trackname_col].dropna().astype(str).unique()).tolist())
 selected_track = st.sidebar.selectbox("Etapa (TrackName):", tracks)
 
 cols_excluir = [col_map[k] for k in required] + ['XKey', 'XLabel']
-# métricas numéricas + especiais (LapTime, SessionComment)
-metricas = [c for c in df.select_dtypes(include='number').columns if c not in cols_excluir]
+
+# métricas para gráficos de linha (numéricas + especiais), removendo blacklist
+metricas = [
+    c for c in df.select_dtypes(include='number').columns
+    if c not in cols_excluir and c not in METRIC_BLACKLIST
+]
 for special in ["LapTime - Info", "SessionComment - Info"]:
-    if special in df.columns and special not in metricas:
+    if special in df.columns and special not in metricas and special not in METRIC_BLACKLIST:
         metricas.append(special)
 if not metricas:
-    metricas = df.select_dtypes(include='number').columns.tolist()
+    metricas = [
+        c for c in df.select_dtypes(include='number').columns
+        if c not in METRIC_BLACKLIST
+    ]
 
 base = df[df[col_map['caralias']].astype(str) == str(car_alias)]
 if selected_track != "TODAS":
     base = base[base[trackname_col].astype(str) == str(selected_track)]
 
-# ---------------------------
+# =========================
 # Utils (ordenação, filtros, ticks)
-# ---------------------------
+# =========================
 _num_pat = re.compile(r"[-+]?\d*[\.,]?\d+")
 
 def _extract_num_series(series: pd.Series) -> pd.Series:
@@ -194,13 +206,11 @@ def sample_ticks(x_vals: list[str], x_texts: list[str], max_ticks: int = 30):
         idx.append(n - 1)
     return [x_vals[i] for i in idx], [x_texts[i] for i in idx]
 
-# ---------------------------
+# =========================
 # Conversão de métricas especiais
-# ---------------------------
+# =========================
 def parse_laptime_to_seconds(x) -> float:
-    """
-    Converte 'mm:ss.mmm', 'm:ss', 'ss.mmm', 'ss' (vírgula/ponto) em segundos float.
-    """
+    """Converte 'mm:ss.mmm', 'm:ss', 'ss.mmm', 'ss' (vírgula/ponto) em segundos."""
     if pd.isna(x):
         return np.nan
     s = str(x).strip()
@@ -209,21 +219,19 @@ def parse_laptime_to_seconds(x) -> float:
     s = s.replace(",", ".")
     try:
         if ":" in s:
-            # mm:ss(.ms)
             mm, ss = s.split(":", 1)
             return float(mm) * 60.0 + float(ss)
         else:
             return float(s)
     except Exception:
-        # tenta capturar números dentro da string
         m = re.search(r"[-+]?\d*\.?\d+", s)
         return float(m.group(0)) if m else np.nan
 
 def materialize_metric_series(dfin: pd.DataFrame, y_col: str) -> tuple[pd.Series, str, dict]:
     """
-    Retorna (serie_numerica, titulo_y, hover_extra_customdata_dict)
-    - Converte 'LapTime - Info' em segundos
-    - 'SessionComment - Info' vira 0/1 e envia o texto do comentário via customdata
+    Retorna (serie_numerica, titulo_y, hover_extra_customdata_dict).
+    - 'LapTime - Info' => segundos
+    - 'SessionComment - Info' => 1/0 e custom_data com texto do comentário
     """
     y_norm = _normalize(y_col)
     laptime_norm  = _normalize("LapTime - Info")
@@ -237,12 +245,11 @@ def materialize_metric_series(dfin: pd.DataFrame, y_col: str) -> tuple[pd.Series
         has  = text.str.len().fillna(0) > 0
         serie = has.astype(int)  # 1 = tem comentário
         return serie, "Comentário presente (1/0)", {"comment_text": text}
-    # padrão numérico
     return pd.to_numeric(dfin[y_col], errors='coerce'), y_col, {}
 
-# ---------------------------
+# =========================
 # Legenda à direita
-# ---------------------------
+# =========================
 legend_right = dict(
     orientation='v', yanchor='top', y=1,
     xanchor='left', x=1.02,
@@ -251,11 +258,11 @@ legend_right = dict(
     title_text=None
 )
 
-# ---------------------------
+# =========================
 # Hover template (usa custom_data)
-# ---------------------------
+# =========================
 def hover_template_for(metric_title: str, has_comment: bool) -> str:
-    # customdata layout: [Lap, SessionName, Track, XLabel, (optional) CommentText]
+    # customdata: [Lap, SessionName, Track, XLabel, (opcional) CommentText]
     base = (
         f"<b>{metric_title}</b>: %{{y:.3f}}"
         "<br><b>Lap - Info</b>: %{customdata[0]}"
@@ -267,9 +274,9 @@ def hover_template_for(metric_title: str, has_comment: bool) -> str:
         base += "<br><b>SessionComment - Info</b>: %{customdata[4]}"
     return base + "<extra></extra>"
 
-# ---------------------------
+# =========================
 # Helper de plot (linhas)
-# ---------------------------
+# =========================
 def draw_line(df_plot, y_col, color_col, legend_title):
     df_plot = _order(df_plot)
     if y_col not in df_plot.columns and _normalize(y_col) not in [_normalize("LapTime - Info"), _normalize("SessionComment - Info")]:
@@ -280,7 +287,7 @@ def draw_line(df_plot, y_col, color_col, legend_title):
     df_plot = df_plot.copy()
     df_plot["__y__"] = y_series
 
-    # eixo X categórico seguindo a ordem de XKey; rótulo mostrado = XLabel
+    # X categórico seguindo a ordem de XKey; rótulo mostrado = XLabel
     x_vals  = df_plot['XKey'].tolist()
     x_texts = df_plot['XLabel'].tolist()
     tickvals, ticktext = sample_ticks(x_vals, x_texts, max_ticks=30)
@@ -298,7 +305,6 @@ def draw_line(df_plot, y_col, color_col, legend_title):
         color=color_col, markers=True, title=y_title,
         custom_data=custom_cols
     )
-
     fig.update_traces(hovertemplate=hover_template_for(y_title, has_comment))
 
     fig.update_layout(title_font=dict(size=40, color="white"), height=600,
@@ -309,9 +315,9 @@ def draw_line(df_plot, y_col, color_col, legend_title):
                      title=None)
     return fig, df_plot
 
-# ---------------------------
+# =========================
 # Sidebar – blocos (G7/G8 com comparação)
-# ---------------------------
+# =========================
 def sidebar_block(i: int, metrics_list, enable_compare=False):
     y = st.sidebar.selectbox(f"Métrica para Gráfico {i}:", metrics_list, key=f"g{i}::metric")
     st.sidebar.markdown("")
@@ -349,21 +355,27 @@ cfgs = []
 for i in range(1, 9):
     cfgs.append((i, sidebar_block(i, metricas, enable_compare=(i in (7, 8)))))
 
-# ---------------------------
-# Dispersão – controles
-# ---------------------------
+# =========================
+# Dispersão – controles (também respeita blacklist)
+# =========================
 st.sidebar.header("Dispersão")
-metricas_all = [c for c in df.select_dtypes(include='number').columns if c not in cols_excluir] or df.select_dtypes(include='number').columns.tolist()
+metricas_all = [
+    c for c in df.select_dtypes(include='number').columns
+    if c not in cols_excluir and c not in METRIC_BLACKLIST
+] or [
+    c for c in df.select_dtypes(include='number').columns
+    if c not in METRIC_BLACKLIST
+]
 for special in ["LapTime - Info", "SessionComment - Info"]:
-    if special in df.columns and special not in metricas_all:
+    if special in df.columns and special not in metricas_all and special not in METRIC_BLACKLIST:
         metricas_all.append(special)
 x_disp = st.sidebar.selectbox("Métrica X:", metricas_all, key="disp::x")
 y_disp = st.sidebar.selectbox("Métrica Y:", metricas_all, key="disp::y")
 trend = st.sidebar.checkbox("Mostrar linha de tendência", key="disp::trend")
 
-# ---------------------------
+# =========================
 # Monta 8 gráficos (7 e 8 com comparação)
-# ---------------------------
+# =========================
 figs = []
 for i, cfg in cfgs:
     mode = cfg[0]
@@ -385,15 +397,13 @@ for i, cfg in cfgs:
         fig, used = draw_line(df_cmp, y_i, "DriverSessionGroup", "Driver / Session")
         figs.append((i, fig, used, y_i))
 
-# ---------------------------
-# Dispersão (usa X/Y escolhidos; para especiais aplica conversão em Y)
-# ---------------------------
+# =========================
+# Dispersão (aplica conversão no eixo Y se necessário)
+# =========================
 if x_disp in df.columns and y_disp in df.columns:
     df_disp = df.copy()
-    # aplica conversão só no eixo Y (para LapTime/Comment)
-    y_series, y_title, extra = materialize_metric_series(df_disp, y_disp)
+    y_series, y_title, _ = materialize_metric_series(df_disp, y_disp)
     df_disp["__y__"] = y_series
-
     fig_disp = px.scatter(
         df_disp, x=x_disp, y="__y__",
         color=sessionname_col if sessionname_col in df.columns else None,
@@ -404,9 +414,9 @@ if x_disp in df.columns and y_disp in df.columns:
 else:
     fig_disp = None
 
-# ---------------------------
+# =========================
 # Render 3×3
-# ---------------------------
+# =========================
 all_figs = figs + [(9, fig_disp, None, None)]
 for row_start in range(0, 9, 3):
     cols = st.columns(3)
@@ -418,7 +428,6 @@ for row_start in range(0, 9, 3):
             if fig_obj is not None:
                 st.plotly_chart(fig_obj, use_container_width=True, key=f"plot_{grid_key}_{fig_index}")
                 if df_used is not None and y_used is not None:
-                    # estatísticas para a métrica materializada
                     ys, _, _ = materialize_metric_series(df_used, y_used)
                     vec = pd.to_numeric(ys, errors='coerce')
                     c1, c2, c3 = st.columns(3)
