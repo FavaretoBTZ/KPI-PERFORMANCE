@@ -111,7 +111,7 @@ df['SessionLapDate'] = (
     ' | Track ' + df[trackname_col].astype(str)
 )
 
-# rótulo curto para *exibir* no eixo X (sem SessionDate e sem Run)
+# rótulo curto exibido no eixo X (sem SessionDate e sem Run)
 df['XLabelShort'] = (
     'Lap ' + df[lap_col].astype(str) +
     ' | ' + df[sessionname_col].astype(str) +
@@ -155,9 +155,20 @@ def _apply_filters(df_in, driver_sel, mode_sel, session_sel):
             out = out[out[sessionname_col].astype(str) == str(session_sel)]
     return out
 
+# --- helper para rótulos do eixo X (amostragem automática) ---
+def sample_ticks(x_vals: list[str], x_texts: list[str], max_ticks: int = 30):
+    """Seleciona até max_ticks rótulos uniformemente espaçados."""
+    n = len(x_vals)
+    if n <= max_ticks:
+        return x_vals, x_texts
+    step = max(1, n // max_ticks)
+    idx = list(range(0, n, step))
+    if idx[-1] != n - 1:
+        idx.append(n - 1)
+    return [x_vals[i] for i in idx], [x_texts[i] for i in idx]
+
 # ---------------------------
-# Sidebar – blocos dos 8 gráficos
-# (métrica + filtros; G7/G8 com modo comparação)
+# Sidebar – blocos dos 8 gráficos (G7/G8 com comparação)
 # ---------------------------
 def sidebar_block(i: int, metrics_list, enable_compare=False):
     """
@@ -214,8 +225,7 @@ y_disp = st.sidebar.selectbox("Métrica Y:", metricas_all, key="disp::y")
 trend = st.sidebar.checkbox("Mostrar linha de tendência", key="disp::trend")
 
 # ---------------------------
-# Monta as 9 figuras e desenha em grid 3×3 (keys únicas)
-# Tooltips: Lap, Session e Track; eixo X mantém ordem antiga e exibe rótulo curto
+# Monta as 9 figuras e desenha em grid 3×3
 # ---------------------------
 figs = []
 
@@ -228,7 +238,6 @@ def line_hover_template(metric_title: str) -> str:
         "<extra></extra>"
     )
 
-# 1–6: cores por SessionName; 7–8 podem ser comparação
 for i, cfg in cfgs:
     mode = cfg[0]
 
@@ -238,12 +247,13 @@ for i, cfg in cfgs:
         df_g = _order(df_g)
 
         if y_i in df_g.columns and not df_g.empty:
-            # valores e textos do eixo X
-            x_vals  = df_g['SessionLapDate'].tolist()     # mantém ordem cronológica antiga
-            x_texts = df_g['XLabelShort'].tolist()        # exibe só Lap | Session | Track
+            # valores do eixo X (ordem cronológica original) + rótulos curtos
+            x_vals  = df_g['SessionLapDate'].tolist()
+            x_texts = df_g['XLabelShort'].tolist()
+            tickvals_s, ticktext_s = sample_ticks(x_vals, x_texts, max_ticks=30)
 
             fig = px.line(
-                df_g, x='SessionLapDate', y=y_i,          # x original
+                df_g, x='SessionLapDate', y=y_i,          # mantém a ordem original
                 color=sessionname_col,
                 markers=True, title=y_i,
                 hover_data=[lap_col, sessionname_col, trackname_col]
@@ -251,10 +261,11 @@ for i, cfg in cfgs:
             fig.update_traces(hovertemplate=line_hover_template(y_i))
             fig.update_layout(title_font=dict(size=40, color="white"),
                               height=600, legend_title_text=sessionname_col)
+            # ordem e rótulos legíveis
             fig.update_xaxes(
                 type='category',
-                categoryorder='array', categoryarray=x_vals,  # ordem cronológica
-                tickmode='array', tickvals=x_vals, ticktext=x_texts  # mostra rótulo curto
+                categoryorder='array', categoryarray=x_vals,
+                tickmode='array', tickvals=tickvals_s, ticktext=ticktext_s
             )
         else:
             fig = None
@@ -278,9 +289,10 @@ for i, cfg in cfgs:
         if y_i in df_cmp.columns and not df_cmp.empty:
             x_vals  = df_cmp['SessionLapDate'].tolist()
             x_texts = df_cmp['XLabelShort'].tolist()
+            tickvals_s, ticktext_s = sample_ticks(x_vals, x_texts, max_ticks=30)
 
             fig = px.line(
-                df_cmp, x='SessionLapDate', y=y_i,         # x original
+                df_cmp, x='SessionLapDate', y=y_i,
                 color="DriverSessionGroup",
                 markers=True, title=y_i,
                 hover_data=[lap_col, sessionname_col, trackname_col]
@@ -291,13 +303,13 @@ for i, cfg in cfgs:
             fig.update_xaxes(
                 type='category',
                 categoryorder='array', categoryarray=x_vals,
-                tickmode='array', tickvals=x_vals, ticktext=x_texts
+                tickmode='array', tickvals=tickvals_s, ticktext=ticktext_s
             )
         else:
             fig = None
         figs.append((i, fig, df_cmp, y_i))
 
-# Dispersão (título = X vs Y) — hover reduzido (não mexe no eixo)
+# Dispersão (título = X vs Y) — hover reduzido
 if x_disp in df.columns and y_disp in df.columns:
     fig_disp = px.scatter(
         df, x=x_disp, y=y_disp,
