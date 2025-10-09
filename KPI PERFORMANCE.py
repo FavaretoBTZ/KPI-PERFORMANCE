@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import unicodedata, re
 from difflib import get_close_matches
+import numpy as np
 
 # ---------------------------
 # Normalização de nomes
@@ -36,7 +37,7 @@ def resolve_columns(df: pd.DataFrame, req: list[str]) -> dict:
     m = _norm_map(df); keys_av = list(m.keys())
     aliases = {
         "caralias":["caralias","car alias","car","carro","vehicle","car id","car number","carno","n carro"],
-        "sessiondate":["sessiondate","session date","date","data","session day","dia","data sessao"],
+        "sessiondate":["sessiondate","session date","date","data","session day","dia","data sessao","timestamp","time"],
         "run":["run","stint","stint id","stint no","stint number","corrida","bateria"],
         "trackname":["trackname","track name","track","circuit","circuito","etapa"],
         "drivername":["drivername","driver","piloto","nome piloto","driver name"],
@@ -96,13 +97,18 @@ sessionname_col= col_map['sessionname']
 trackname_col  = col_map['trackname']
 drivername_col = col_map['drivername']
 
-# SessionLapDate (x original para manter ordem) + XLabelShort (texto a exibir)
+# ---------------------------
+# Campos auxiliares para ordenação e rótulos
+# ---------------------------
+
+# SessionDate em string padronizada (para compor chave X imutável)
 if pd.api.types.is_datetime64_any_dtype(df[sessiondate_col]):
     sdate_str = df[sessiondate_col].dt.strftime("%Y-%m-%d %H:%M:%S").astype(str)
 else:
-    s_try = pd.to_datetime(df[sessiondate_col], errors='coerce')
+    s_try = pd.to_datetime(df[sessiondate_col], errors='coerce', dayfirst=False)
     sdate_str = s_try.dt.strftime("%Y-%m-%d %H:%M:%S").fillna(df[sessiondate_col].astype(str))
 
+# Chave X interna (ordenação): inclui SessionDate/Run/Lap, mas não será mostrada
 df['SessionLapDate'] = (
     sdate_str +
     ' | Run ' + df[run_col].astype(str) +
@@ -111,7 +117,7 @@ df['SessionLapDate'] = (
     ' | Track ' + df[trackname_col].astype(str)
 )
 
-# rótulo curto exibido no eixo X (sem SessionDate e sem Run)
+# Rótulo curto exibido no eixo X (sem SessionDate e sem Run)
 df['XLabelShort'] = (
     'Lap ' + df[lap_col].astype(str) +
     ' | ' + df[sessionname_col].astype(str) +
@@ -137,15 +143,40 @@ base = df[df[col_map['caralias']].astype(str) == str(car_alias)]
 if selected_track != "TODAS":
     base = base[base[trackname_col].astype(str) == str(selected_track)]
 
+# ---------------------------
 # Utils
-def _safe_num(s): return pd.to_numeric(s, errors='coerce')
+# ---------------------------
+def _safe_num(s):
+    return pd.to_numeric(s, errors='coerce')
+
+_num_pat = re.compile(r"[-+]?\d*[\.,]?\d+")
+
+def _extract_num_series(series: pd.Series) -> pd.Series:
+    """Extrai o primeiro número de strings como 'r2,4' -> 2.4 para ordenar."""
+    def _one(x):
+        m = _num_pat.search(str(x))
+        if not m: return np.nan
+        val = m.group(0).replace(",", ".")
+        try:
+            return float(val)
+        except:
+            return np.nan
+    return series.map(_one)
+
 def _order(dfin: pd.DataFrame) -> pd.DataFrame:
     sdate_ord = pd.to_datetime(dfin[sessiondate_col], errors='coerce')
+    run_num = _extract_num_series(dfin[run_col])
+    lap_num = _extract_num_series(dfin[lap_col])
+    idx_orig = np.arange(len(dfin))
     return dfin.assign(
         __sdate_ord=sdate_ord,
-        __run_ord=_safe_num(dfin[run_col]),
-        __lap_ord=_safe_num(dfin[lap_col]),
-    ).sort_values(by=["__sdate_ord","__run_ord","__lap_ord"], kind="mergesort")
+        __run_ord=run_num,
+        __lap_ord=lap_num,
+        __idx=idx_orig
+    ).sort_values(
+        by=["__sdate_ord","__run_ord","__lap_ord","__idx"],
+        kind="mergesort"
+    )
 
 def _apply_filters(df_in, driver_sel, mode_sel, session_sel):
     out = df_in
@@ -166,6 +197,45 @@ def sample_ticks(x_vals: list[str], x_texts: list[str], max_ticks: int = 30):
     if idx[-1] != n - 1:
         idx.append(n - 1)
     return [x_vals[i] for i in idx], [x_texts[i] for i in idx]
+
+# ---------------------------
+# Hover
+# ---------------------------
+def line_hover_template(metric_title: str) -> str:
+    # Usa índices conforme a ordem em custom_data passada ao px.line/px.scatter
+    return (
+        f"<b>{metric_title}</b>: %{{y:.3f}}"
+        "<br><b>Lap - Info</b>: %{customdata[0]}"
+        "<br><b>SessionName - Info</b>: %{customdata[1]}"
+        "<br><b>Track</b>: %{customdata[2]}"
+        "<br><b>25ET5</b>: %{customdata[3]}"
+        "<br><b>25ET6</b>: %{customdata[4]}"
+        "<extra></extra>"
+    )
+
+def attach_custom_data(dfin: pd.DataFrame) -> tuple[pd.DataFrame, list]:
+    """Cria as colunas que serão passadas em custom_data para o plotly."""
+    dfin = dfin.copy()
+    dfin["__lap_info"]   = dfin[lap_col].astype(str)
+    dfin["__sess_info"]  = dfin[sessionname_col].astype(str)
+    dfin["__track_info"] = dfin[trackname_col].astype(str)
+    for opt in ["25ET5","25ET6"]:
+        dfin[f"__{opt}"] = dfin[opt] if opt in dfin.columns else np.nan
+    custom_cols = ["__lap_info","__sess_info","__track_info","__25ET5","__25ET6"]
+    return dfin, custom_cols
+
+legend_style = dict(
+    orientation='h',
+    yanchor='top', y=-0.2,
+    xanchor='left', x=0.0,
+    bgcolor='rgba(0,0,0,0.3)',
+    font=dict(size=13),
+    title_text=None,
+    traceorder='normal',
+    itemsizing='constant'
+)
+
+title_style = dict(size=40, color="white")
 
 # ---------------------------
 # Sidebar – blocos dos 8 gráficos (G7/G8 com comparação)
@@ -229,15 +299,6 @@ trend = st.sidebar.checkbox("Mostrar linha de tendência", key="disp::trend")
 # ---------------------------
 figs = []
 
-def line_hover_template(metric_title: str) -> str:
-    return (
-        f"<b>{metric_title}</b>: %{{y:.2f}}"
-        "<br>Lap: %{{customdata[0]}}"
-        "<br>Session: %{{customdata[1]}}"
-        "<br>Track: %{{customdata[2]}}"
-        "<extra></extra>"
-    )
-
 for i, cfg in cfgs:
     mode = cfg[0]
 
@@ -247,21 +308,26 @@ for i, cfg in cfgs:
         df_g = _order(df_g)
 
         if y_i in df_g.columns and not df_g.empty:
-            # valores do eixo X (ordem cronológica original) + rótulos curtos
-            x_vals  = df_g['SessionLapDate'].tolist()
-            x_texts = df_g['XLabelShort'].tolist()
+            x_vals  = df_g['SessionLapDate'].tolist()  # chave para ordem
+            x_texts = df_g['XLabelShort'].tolist()     # rótulo mostrado
             tickvals_s, ticktext_s = sample_ticks(x_vals, x_texts, max_ticks=30)
 
+            # custom_data (em ordem dos índices usados no hovertemplate)
+            df_g, custom_cols = attach_custom_data(df_g)
+
             fig = px.line(
-                df_g, x='SessionLapDate', y=y_i,          # mantém a ordem original
+                df_g, x='SessionLapDate', y=y_i,
                 color=sessionname_col,
                 markers=True, title=y_i,
-                hover_data=[lap_col, sessionname_col, trackname_col]
+                custom_data=custom_cols
             )
             fig.update_traces(hovertemplate=line_hover_template(y_i))
             fig.update_layout(title_font=dict(size=40, color="white"),
-                              height=600, legend_title_text=sessionname_col)
-            # ordem e rótulos legíveis
+                              height=600, legend=dict(
+                                  orientation='h', yanchor='top', y=-0.2,
+                                  xanchor='left', x=0.0, bgcolor='rgba(0,0,0,0.3)',
+                                  font=dict(size=13), title_text=None
+                              ))
             fig.update_xaxes(
                 type='category',
                 categoryorder='array', categoryarray=x_vals,
@@ -291,15 +357,21 @@ for i, cfg in cfgs:
             x_texts = df_cmp['XLabelShort'].tolist()
             tickvals_s, ticktext_s = sample_ticks(x_vals, x_texts, max_ticks=30)
 
+            df_cmp, custom_cols = attach_custom_data(df_cmp)
+
             fig = px.line(
                 df_cmp, x='SessionLapDate', y=y_i,
                 color="DriverSessionGroup",
                 markers=True, title=y_i,
-                hover_data=[lap_col, sessionname_col, trackname_col]
+                custom_data=custom_cols
             )
             fig.update_traces(hovertemplate=line_hover_template(y_i))
             fig.update_layout(title_font=dict(size=40, color="white"),
-                              height=600, legend_title_text="Driver / Session")
+                              height=600, legend=dict(
+                                  orientation='h', yanchor='top', y=-0.2,
+                                  xanchor='left', x=0.0, bgcolor='rgba(0,0,0,0.3)',
+                                  font=dict(size=13), title_text=None
+                              ))
             fig.update_xaxes(
                 type='category',
                 categoryorder='array', categoryarray=x_vals,
@@ -309,23 +381,30 @@ for i, cfg in cfgs:
             fig = None
         figs.append((i, fig, df_cmp, y_i))
 
-# Dispersão (título = X vs Y) — hover reduzido
+# Dispersão (título = X vs Y) — hover com os mesmos campos
 if x_disp in df.columns and y_disp in df.columns:
+    df_disp, custom_cols = attach_custom_data(df)
+    color_col = sessionname_col if sessionname_col in df.columns else None
+
     fig_disp = px.scatter(
-        df, x=x_disp, y=y_disp,
-        color=sessionname_col if sessionname_col in df.columns else None,
+        df_disp, x=x_disp, y=y_disp,
+        color=color_col,
         trendline="ols" if trend else None,
-        hover_data=[lap_col, sessionname_col, trackname_col],
-        title=f"{x_disp} vs {y_disp}"
+        title=f"{x_disp} vs {y_disp}",
+        custom_data=custom_cols
     )
     fig_disp.update_traces(hovertemplate=
         "<b>X</b>: %{x}<br><b>Y</b>: %{y}"
-        "<br>Lap: %{customdata[0]}"
-        "<br>Session: %{customdata[1]}"
-        "<br>Track: %{customdata[2]}"
+        "<br><b>Lap - Info</b>: %{customdata[0]}"
+        "<br><b>SessionName - Info</b>: %{customdata[1]}"
+        "<br><b>Track</b>: %{customdata[2]}"
+        "<br><b>25ET5</b>: %{customdata[3]}<br><b>25ET6</b>: %{customdata[4]}"
         "<extra></extra>"
     )
-    fig_disp.update_layout(title_font=dict(size=40, color="white"), height=600, legend_title_text=sessionname_col)
+    fig_disp.update_layout(title_font=dict(size=40, color="white"), height=600,
+                           legend=dict(orientation='h', yanchor='top', y=-0.2,
+                                       xanchor='left', x=0.0, bgcolor='rgba(0,0,0,0.3)',
+                                       font=dict(size=13), title_text=None))
 else:
     fig_disp = None
 
@@ -340,10 +419,11 @@ for row_start in range(0, 9, 3):
         with cols[j]:
             if fig_obj is not None:
                 st.plotly_chart(fig_obj, use_container_width=True, key=f"plot_{grid_key}_{fig_index}")
-                if df_used is not None and y_used is not None:
+                if df_used is not None and y_used is not None and y_used in df_used.columns:
+                    vec = pd.to_numeric(df_used[y_used], errors='coerce')
                     c1, c2, c3 = st.columns(3)
-                    with c1: st.metric("Mínimo", f"{pd.to_numeric(df_used[y_used], errors='coerce').min():.2f}")
-                    with c2: st.metric("Máximo", f"{pd.to_numeric(df_used[y_used], errors='coerce').max():.2f}")
-                    with c3: st.metric("Média",  f"{pd.to_numeric(df_used[y_used], errors='coerce').mean():.2f}")
+                    with c1: st.metric("Mínimo", f"{vec.min():.2f}")
+                    with c2: st.metric("Máximo", f"{vec.max():.2f}")
+                    with c3: st.metric("Média",  f"{vec.mean():.2f}")
             else:
                 st.info("Sem dados para este conjunto de filtros.", key=f"info_{grid_key}")
