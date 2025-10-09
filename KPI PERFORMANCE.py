@@ -140,7 +140,7 @@ if selected_track != "TODAS":
     base = base[base[trackname_col].astype(str) == str(selected_track)]
 
 # ---------------------------
-# Utils (ordenação e ticks)
+# Utils (ordenação, filtros, ticks)
 # ---------------------------
 _num_pat = re.compile(r"[-+]?\d*[\.,]?\d+")
 
@@ -152,7 +152,7 @@ def _extract_num_series(series: pd.Series) -> pd.Series:
     return series.map(_one)
 
 def _order(dfin: pd.DataFrame) -> pd.DataFrame:
-    """Ordem cronológica exata: SessionDate -> Run -> Lap -> SessionName -> TrackName."""
+    """Ordem: SessionDate -> Run -> Lap -> SessionName -> TrackName."""
     sdate_ord = pd.to_datetime(dfin[sessiondate_col], errors='coerce')
     run_ord   = _extract_num_series(dfin[run_col])
     lap_ord   = _extract_num_series(dfin[lap_col])
@@ -170,6 +170,17 @@ def _order(dfin: pd.DataFrame) -> pd.DataFrame:
         by=["__sdate_ord","__run_ord","__lap_ord","__sess_ord","__track_ord","__idx"],
         kind="mergesort"
     )
+
+def _apply_filters(dfin, driver, mode, session):
+    """Filtra por driver e, opcionalmente, por uma única sessão."""
+    if dfin is None or dfin.empty:
+        return dfin
+    dfout = dfin.copy()
+    if driver:
+        dfout = dfout[dfout[drivername_col].astype(str) == str(driver)]
+    if mode == "Apenas uma" and session:
+        dfout = dfout[dfout[sessionname_col].astype(str) == str(session)]
+    return dfout
 
 def sample_ticks(x_vals: list[str], x_texts: list[str], max_ticks: int = 30):
     n = len(x_vals)
@@ -265,7 +276,7 @@ legend_right = dict(
 )
 
 # ---------------------------
-# Helpers de plot
+# Helper de plot (linhas)
 # ---------------------------
 def draw_line(df_plot, y_col, color_col, legend_title):
     df_plot = _order(df_plot)
@@ -298,8 +309,7 @@ for i, cfg in cfgs:
     mode = cfg[0]
     if mode == "single":
         _, y_i, d_i, m_i, s_i = cfg
-        df_g = base.copy()
-        df_g = _apply_filters(df_g, d_i, m_i, s_i)
+        df_g = _apply_filters(base.copy(), d_i, m_i, s_i)
         fig, used = draw_line(df_g, y_i, sessionname_col, sessionname_col)
         figs.append((i, fig, used, y_i))
     else:
