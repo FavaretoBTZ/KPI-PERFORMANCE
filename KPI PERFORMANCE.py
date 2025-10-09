@@ -4,12 +4,11 @@ import plotly.express as px
 import unicodedata, re, os
 from difflib import get_close_matches
 import numpy as np
-from io import BytesIO  # ainda útil caso queira mudar para download futuramente
 
 # =========================
 # Config
 # =========================
-METRIC_BLACKLIST = {"DataSet - Slot"}  # ← remove essa métrica das seleções
+METRIC_BLACKLIST = {"DataSet - Slot"}  # remover essa métrica das seleções
 
 # =========================
 # Normalização de nomes
@@ -72,7 +71,6 @@ def resolve_columns(df: pd.DataFrame, req: list[str]) -> dict:
     return out
 
 def _find_col_exact(df: pd.DataFrame, label: str):
-    """Procura a coluna pelo rótulo exato (normalizado)."""
     return _norm_map(df).get(_normalize(label))
 
 # =========================
@@ -191,7 +189,6 @@ def _order(dfin: pd.DataFrame) -> pd.DataFrame:
     )
 
 def _apply_filters(dfin, driver, mode, session):
-    """Filtra por driver e, opcionalmente, por uma única sessão."""
     if dfin is None or dfin.empty:
         return dfin
     dfout = dfin.copy()
@@ -215,29 +212,19 @@ def sample_ticks(x_vals: list[str], x_texts: list[str], max_ticks: int = 30):
 # Conversão de métricas especiais
 # =========================
 def parse_laptime_to_seconds(x) -> float:
-    """Converte 'mm:ss.mmm', 'm:ss', 'ss.mmm', 'ss' (vírgula/ponto) em segundos."""
-    if pd.isna(x):
-        return np.nan
-    s = str(x).strip()
-    if not s or s.lower() in ["nan", "none"]:
-        return np.nan
-    s = s.replace(",", ".")
+    if pd.isna(x): return np.nan
+    s = str(x).strip().replace(",", ".")
+    if not s or s.lower() in ["nan", "none"]: return np.nan
     try:
         if ":" in s:
             mm, ss = s.split(":", 1)
             return float(mm) * 60.0 + float(ss)
-        else:
-            return float(s)
+        return float(s)
     except Exception:
         m = re.search(r"[-+]?\d*\.?\d+", s)
         return float(m.group(0)) if m else np.nan
 
-def materialize_metric_series(dfin: pd.DataFrame, y_col: str) -> tuple[pd.Series, str, dict]:
-    """
-    Retorna (serie_numerica, titulo_y, hover_extra_customdata_dict).
-    - 'LapTime - Info' => segundos
-    - 'SessionComment - Info' => 1/0 e custom_data com texto do comentário
-    """
+def materialize_metric_series(dfin: pd.DataFrame, y_col: str):
     y_norm = _normalize(y_col)
     laptime_norm  = _normalize("LapTime - Info")
     comment_norm  = _normalize("SessionComment - Info")
@@ -264,10 +251,9 @@ legend_right = dict(
 )
 
 # =========================
-# Hover template (usa custom_data)
+# Hover template
 # =========================
 def hover_template_for(metric_title: str, has_comment: bool) -> str:
-    # customdata: [Lap, SessionName, Track, XLabel, (opcional) CommentText]
     base = (
         f"<b>{metric_title}</b>: %{{y:.3f}}"
         "<br><b>Lap - Info</b>: %{customdata[0]}"
@@ -287,17 +273,14 @@ def draw_line(df_plot, y_col, color_col, legend_title):
     if y_col not in df_plot.columns and _normalize(y_col) not in [_normalize("LapTime - Info"), _normalize("SessionComment - Info")]:
         return None, df_plot
 
-    # materializa y (conversões especiais)
     y_series, y_title, extra = materialize_metric_series(df_plot, y_col)
     df_plot = df_plot.copy()
     df_plot["__y__"] = y_series
 
-    # X categórico seguindo a ordem de XKey; rótulo mostrado = XLabel
     x_vals  = df_plot['XKey'].tolist()
     x_texts = df_plot['XLabel'].tolist()
     tickvals, ticktext = sample_ticks(x_vals, x_texts, max_ticks=30)
 
-    # custom_data -> valores corretos no hover
     custom_cols = [lap_col, sessionname_col, trackname_col, 'XLabel']
     has_comment = False
     if "comment_text" in extra:
@@ -311,7 +294,6 @@ def draw_line(df_plot, y_col, color_col, legend_title):
         custom_data=custom_cols
     )
     fig.update_traces(hovertemplate=hover_template_for(y_title, has_comment))
-
     fig.update_layout(title_font=dict(size=40, color="white"), height=600,
                       legend=legend_right, legend_title_text=legend_title)
     fig.update_xaxes(type='category',
@@ -361,7 +343,7 @@ for i in range(1, 9):
     cfgs.append((i, sidebar_block(i, metricas, enable_compare=(i in (7, 8)))))
 
 # =========================
-# Dispersão – controles (também respeita blacklist)
+# Dispersão
 # =========================
 st.sidebar.header("Dispersão")
 metricas_all = [
@@ -403,7 +385,7 @@ for i, cfg in cfgs:
         figs.append((i, fig, used, y_i))
 
 # =========================
-# Dispersão (aplica conversão no eixo Y se necessário)
+# Dispersão (opcional)
 # =========================
 if x_disp in df.columns and y_disp in df.columns:
     df_disp = df.copy()
@@ -427,11 +409,10 @@ for row_start in range(0, 9, 3):
     cols = st.columns(3)
     for j in range(3):
         slot_idx = row_start + j
-        grid_key = f"grid_{row_start}_{j}"
         fig_index, fig_obj, df_used, y_used = all_figs[slot_idx]
         with cols[j]:
             if fig_obj is not None:
-                st.plotly_chart(fig_obj, use_container_width=True, key=f"plot_{grid_key}_{fig_index}")
+                st.plotly_chart(fig_obj, use_container_width=True)
                 if df_used is not None and y_used is not None:
                     ys, _, _ = materialize_metric_series(df_used, y_used)
                     vec = pd.to_numeric(ys, errors='coerce')
@@ -440,19 +421,17 @@ for row_start in range(0, 9, 3):
                     with c2: st.metric("Máximo", f"{vec.max():.3f}" if vec.notna().any() else "—")
                     with c3: st.metric("Média",  f"{vec.mean():.3f}" if vec.notna().any() else "—")
             else:
-                st.info("Sem dados para este conjunto de filtros.", key=f"info_{grid_key}")
+                st.info("Sem dados para este conjunto de filtros.")
 
 # =====================================================================
-# EXPORTAÇÃO NO FINAL: por Track selecionado -> GERA E SALVA AUTOMÁTICO
+# EXPORTAÇÃO: por Track selecionado -> GERA E SALVA AUTOMÁTICO
 # =====================================================================
 st.markdown("---")
 st.header("Exportar planilhas por TrackName - Info (geração automática, sem download)")
 
-# opções de TrackName a partir do arquivo (não usa filtro da sidebar para dar liberdade)
 all_tracks = sorted(df[trackname_col].dropna().astype(str).unique().tolist())
 track_sel = st.selectbox("TrackName - Info (exportação):", all_tracks, index=0, key="export::track")
 
-# colunas de saída na ordem solicitada
 wanted_labels = [
     "SessionName - Info", "LapTime - Info", "Tire - Info", "TrackName - Info",
     "AccX -Min", "AccX -Max", "AccX -Avg",
@@ -463,53 +442,59 @@ wanted_labels = [
     "25_AcLong_Trigger_Negativo -Avg",
 ]
 
-# mapeia rótulo -> coluna real do DataFrame (se alguma faltar, cria vazia)
-col_map_export = {}
-for lbl in wanted_labels:
-    col_map_export[lbl] = _find_col_exact(df, lbl)
+def _find_col_exact_local(df_in: pd.DataFrame, label: str):
+    return { _normalize(c): c for c in df_in.columns }.get(_normalize(label))
 
-# subset do DataFrame pelo Track selecionado
+col_map_export = { lbl: _find_col_exact_local(df, lbl) for lbl in wanted_labels }
+
 df_track = df[df[trackname_col].astype(str) == str(track_sel)].copy()
-
-# lista de drivers nesse track
 drivers_in_track = sorted(df_track[drivername_col].dropna().astype(str).unique().tolist())
 
 def _sanitize_filename(s: str) -> str:
     s = re.sub(r"[^\w\-. ]+", "_", s.strip())
     return s[:120] if len(s) > 120 else s
 
-# pasta onde os arquivos serão salvos
 base_dir = os.path.join(".", "exports", _sanitize_filename(track_sel))
 os.makedirs(base_dir, exist_ok=True)
 
 if drivers_in_track:
     st.success(f"Gerando arquivos para {len(drivers_in_track)} driver(s) em **{track_sel}** (salvos em `{base_dir}`):")
-    # gera e salva automaticamente
     for drv in drivers_in_track:
         df_drv = df_track[df_track[drivername_col].astype(str) == drv].copy()
 
-        # monta DataFrame de saída com as colunas na ordem pedida
+        # ---- aba 'Dados'
         out_cols = []
         for lbl in wanted_labels:
             c = col_map_export[lbl]
             if c is not None and c in df_drv.columns:
                 out_cols.append(df_drv[c])
             else:
-                # cria coluna vazia para manter a ordem exigida
                 out_cols.append(pd.Series([np.nan]*len(df_drv), index=df_drv.index, name=lbl))
         df_out = pd.concat(out_cols, axis=1)
-        df_out.columns = wanted_labels  # garante os nomes
+        df_out.columns = wanted_labels
 
-        # caminho do arquivo
+        # ---- aba 'Sessoes' (todas as sessões do driver nesse track)
+        sess_col_real = _find_col_exact_local(df, "SessionName - Info")
+        if sess_col_real is not None and sess_col_real in df_drv.columns:
+            sessions_unique = (
+                df_drv[[sess_col_real]].dropna().astype(str).drop_duplicates()
+                .rename(columns={sess_col_real: "SessionName - Info"})
+                .sort_values("SessionName - Info", kind="mergesort")
+                .reset_index(drop=True)
+            )
+        else:
+            sessions_unique = pd.DataFrame({"SessionName - Info": []})
+
+        # salvar
         fname = f"{_sanitize_filename(drv)}.xlsx"
         fpath = os.path.join(base_dir, fname)
-
-        # salva direto no disco (sem botão de download)
         with pd.ExcelWriter(fpath, engine="openpyxl") as writer:
             df_out.to_excel(writer, sheet_name="Dados", index=False)
+            sessions_unique.to_excel(writer, sheet_name="Sessoes", index=False)
 
-        # mostra um resumo/preview
         with st.expander(f"✅ Arquivo gerado: {fpath}"):
             st.dataframe(df_out.head(5), use_container_width=True)
+            st.caption("Aba 'Sessoes' (todas as SessionName - Info desse driver no track selecionado):")
+            st.dataframe(sessions_unique, use_container_width=True)
 else:
     st.info("Não há dados para o Track selecionado.")
