@@ -149,22 +149,19 @@ def _apply_filters(df_in, driver_sel, mode_sel, session_sel):
 
 # ---------------------------
 # Sidebar – blocos dos 8 gráficos
-# (métrica + filtros logo abaixo; G7/G8 com modo comparação)
+# (métrica + filtros; G7/G8 com modo comparação)
 # ---------------------------
 def sidebar_block(i: int, metrics_list, enable_compare=False):
     """
     Retorna:
-      - para normal: (mode='single', y, driver, sess_mode, session)
-      - para comparação: (mode='compare', y,
-            driverA, sess_modeA, sessionA,
-            driverB, sess_modeB, sessionB)
+      - 'single', y, driver, sess_mode, session
+      - 'compare', y, dA, mA, sA, dB, mB, sB
     """
     y = st.sidebar.selectbox(f"Métrica para Gráfico {i}:", metrics_list, key=f"g{i}::metric")
     st.sidebar.markdown("")
     if enable_compare:
         cmp_on = st.sidebar.checkbox(f"Modo comparação (G{i}) – 2 drivers", key=f"g{i}::cmp_on")
         if cmp_on:
-            # Driver A
             drivers = sorted(base[drivername_col].dropna().astype(str).unique())
             dA = st.sidebar.selectbox(f"Driver A (G{i}):", drivers, key=f"g{i}::drvA")
             mA = st.sidebar.radio(f"Sessões A (G{i}):", ["Todas","Apenas uma"], index=0, horizontal=True, key=f"g{i}::modeA")
@@ -173,7 +170,6 @@ def sidebar_block(i: int, metrics_list, enable_compare=False):
                 sessionsA = sorted(base[base[drivername_col].astype(str)==str(dA)][sessionname_col].dropna().astype(str).unique())
                 if sessionsA:
                     sA = st.sidebar.selectbox(f"SessionName A (G{i}):", sessionsA, key=f"g{i}::sessA")
-            # Driver B
             dB = st.sidebar.selectbox(f"Driver B (G{i}):", drivers, key=f"g{i}::drvB")
             mB = st.sidebar.radio(f"Sessões B (G{i}):", ["Todas","Apenas uma"], index=0, horizontal=True, key=f"g{i}::modeB")
             sB = None
@@ -183,7 +179,6 @@ def sidebar_block(i: int, metrics_list, enable_compare=False):
                     sB = st.sidebar.selectbox(f"SessionName B (G{i}):", sessionsB, key=f"g{i}::sessB")
             st.sidebar.markdown("---")
             return ("compare", y, dA, mA, sA, dB, mB, sB)
-    # modo normal (um driver opcional)
     enable = st.sidebar.checkbox(f"Filtrar por Driver (G{i})", key=f"g{i}::enable")
     drv = mode = ses = None
     if enable:
@@ -197,16 +192,12 @@ def sidebar_block(i: int, metrics_list, enable_compare=False):
     st.sidebar.markdown("---")
     return ("single", y, drv, (mode or "Todas"), ses)
 
-# Gráficos 1–6: normal; 7–8: com comparação
 cfgs = []
 for i in range(1, 9):
-    if i in (7, 8):
-        cfgs.append((i, sidebar_block(i, metricas, enable_compare=True)))
-    else:
-        cfgs.append((i, sidebar_block(i, metricas, enable_compare=False)))
+    cfgs.append((i, sidebar_block(i, metricas, enable_compare=(i in (7, 8)))))
 
 # ---------------------------
-# Dispersão – controles na sidebar (continua igual)
+# Dispersão – controles na sidebar
 # ---------------------------
 st.sidebar.header("Dispersão")
 metricas_all = [c for c in df.select_dtypes(include='number').columns if c not in cols_excluir] or df.select_dtypes(include='number').columns.tolist()
@@ -215,24 +206,22 @@ y_disp = st.sidebar.selectbox("Métrica Y:", metricas_all, key="disp::y")
 trend = st.sidebar.checkbox("Mostrar linha de tendência", key="disp::trend")
 
 # ---------------------------
-# Monta as 9 figuras (8 linhas + dispersão) e desenha em grid 3x3
+# Monta as 9 figuras e desenha em grid 3x3
+# (TÍTULO = MÉTRICA SELECIONADA; sem subheader duplicado)
 # ---------------------------
 figs = []
 
 for i, cfg in cfgs:
     mode = cfg[0]
-    title = f"Gráfico {i}"
-
     if mode == "single":
         _, y_i, d_i, m_i, s_i = cfg
         df_g = _apply_filters(base, d_i, m_i, s_i)
         df_g = _order(df_g)
         if y_i in df_g.columns and not df_g.empty:
-            # cor por SessionName (padrão)
             fig = px.line(
                 df_g, x='SessionLapDate', y=y_i,
-                color=sessionname_col,
-                markers=True, title=title
+                color=sessionname_col,  # cores por SessionName
+                markers=True, title=y_i  # <-- título = métrica
             )
             fig.update_layout(title_font=dict(size=40, color="white"),
                               height=600, legend_title_text=sessionname_col)
@@ -240,16 +229,13 @@ for i, cfg in cfgs:
                              categoryarray=df_g['SessionLapDate'].tolist())
         else:
             fig = None
-        figs.append((title, fig, df_g, y_i))
+        figs.append((fig, df_g, y_i))
 
-    else:  # mode == "compare" (somente G7 e G8)
+    else:
         _, y_i, dA, mA, sA, dB, mB, sB = cfg
-
-        # Subconjuntos A e B
         df_A = _apply_filters(base, dA, mA, sA)
         df_B = _apply_filters(base, dB, mB, sB)
 
-        # Marca grupo "Driver / Session"
         def add_group(dfin, driver_label):
             if dfin.empty: return dfin
             dfin = dfin.copy()
@@ -258,15 +244,13 @@ for i, cfg in cfgs:
 
         df_A = add_group(_order(df_A), str(dA) if dA is not None else "A")
         df_B = add_group(_order(df_B), str(dB) if dB is not None else "B")
-
         df_cmp = pd.concat([df_A, df_B], ignore_index=True)
 
         if y_i in df_cmp.columns and not df_cmp.empty:
-            # cor por Driver/Session para distinguir drivers
             fig = px.line(
                 df_cmp, x='SessionLapDate', y=y_i,
                 color="DriverSessionGroup",
-                markers=True, title=title
+                markers=True, title=y_i  # <-- título = métrica
             )
             fig.update_layout(title_font=dict(size=40, color="white"),
                               height=600, legend_title_text="Driver / Session")
@@ -274,10 +258,9 @@ for i, cfg in cfgs:
                              categoryarray=df_cmp['SessionLapDate'].tolist())
         else:
             fig = None
-        figs.append((title, fig, df_cmp, y_i))
+        figs.append((fig, df_cmp, y_i))
 
-# 9º slot: Dispersão (por SessionName)
-disp_title = "Dispersão"
+# Dispersão (título = X vs Y)
 if x_disp in df.columns and y_disp in df.columns:
     fig_disp = px.scatter(
         df, x=x_disp, y=y_disp,
@@ -286,24 +269,22 @@ if x_disp in df.columns and y_disp in df.columns:
         hover_data=[sessionname_col if sessionname_col in df.columns else None,
                     lap_col if lap_col in df.columns else None,
                     run_col if run_col in df.columns else None],
-        title=disp_title
+        title=f"{x_disp} vs {y_disp}"  # <-- título informativo
     )
     fig_disp.update_layout(title_font=dict(size=40, color="white"), height=600, legend_title_text=sessionname_col)
 else:
     fig_disp = None
-figs.append((disp_title, fig_disp, None, None))
 
-# Desenha em 3 linhas × 3 colunas
+# Desenha em 3×3 (G1..G3 | G4..G6 | G7..G8 | Dispersão)
+all_figs = figs + [(fig_disp, None, None)]
 for row_start in range(0, 9, 3):
     cols = st.columns(3)
     for j in range(3):
         idx = row_start + j
-        title, fig, df_used, y_used = figs[idx]
+        fig_obj, df_used, y_used = all_figs[idx]
         with cols[j]:
-            st.subheader(title)
-            if fig is not None:
-                st.plotly_chart(fig, use_container_width=True)
-                # métricas apenas para os 8 line plots
+            if fig_obj is not None:
+                st.plotly_chart(fig_obj, use_container_width=True)
                 if df_used is not None and y_used is not None:
                     c1,c2,c3 = st.columns(3)
                     with c1: st.metric("Mínimo", f"{pd.to_numeric(df_used[y_used], errors='coerce').min():.2f}")
