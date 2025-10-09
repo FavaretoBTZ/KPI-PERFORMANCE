@@ -50,7 +50,7 @@ def resolve_columns(df: pd.DataFrame, req: list[str]) -> dict:
         # direto
         for c in cands:
             if c in m: found = m[c]; break
-        # prefixo/contém
+        # prefixo / contém
         if not found:
             for c in cands:
                 hits = [k for k in keys_av if k.startswith(c+" ")]
@@ -74,7 +74,6 @@ st.set_page_config(layout="wide")
 st.title("KPI VITAIS - Análise Dinâmica")
 
 uploaded_file = st.file_uploader("Escolha a planilha (.xlsx):", type=["xlsx"])
-
 if not uploaded_file:
     st.info("Envie uma planilha .xlsx para iniciar a análise.")
     st.stop()
@@ -106,7 +105,6 @@ if pd.api.types.is_datetime64_any_dtype(df[sessiondate_col]):
 else:
     s_try = pd.to_datetime(df[sessiondate_col], errors='coerce')
     sdate_str = s_try.dt.strftime("%Y-%m-%d %H:%M:%S").fillna(df[sessiondate_col].astype(str))
-
 df['SessionLapDate'] = (
     sdate_str +
     ' | Run ' + df[run_col].astype(str) +
@@ -154,7 +152,7 @@ def _apply_filters(df_in, driver_sel, mode_sel, session_sel):
 
 # ---------------------------
 # Sidebar – blocos dos 8 gráficos
-# (cada um tem métrica + filtros logo abaixo)
+# (métrica + filtros logo abaixo)
 # ---------------------------
 def sidebar_block(i: int, metrics_list):
     """Cria os widgets de um gráfico i e devolve (y, driver, mode, session)."""
@@ -173,46 +171,67 @@ def sidebar_block(i: int, metrics_list):
     st.sidebar.markdown("---")
     return y, drv, (mode or "Todas"), ses
 
-# cria 8 configs
 cfgs = [sidebar_block(i, metricas) for i in range(1, 9)]
 
 # ---------------------------
-# Render dos 8 gráficos
-# ---------------------------
-for i, (y_i, d_i, m_i, s_i) in enumerate(cfgs, start=1):
-    with st.container():
-        df_g = _apply_filters(base, d_i, m_i, s_i)
-        df_g = _order(df_g)
-        st.subheader(f"Gráfico {i}")
-        if y_i in df_g.columns and not df_g.empty:
-            fig = px.line(df_g, x='SessionLapDate', y=y_i, color=trackname_col, markers=True, title=f"Gráfico {i}")
-            fig.update_layout(title_font=dict(size=40, color="white"), height=600, legend_title_text=trackname_col)
-            fig.update_xaxes(type='category', categoryorder='array', categoryarray=df_g['SessionLapDate'].tolist())
-            st.plotly_chart(fig, use_container_width=True)
-            c1,c2,c3 = st.columns(3)
-            with c1: st.metric("Mínimo", f"{pd.to_numeric(df_g[y_i], errors='coerce').min():.2f}")
-            with c2: st.metric("Máximo", f"{pd.to_numeric(df_g[y_i], errors='coerce').max():.2f}")
-            with c3: st.metric("Média",  f"{pd.to_numeric(df_g[y_i], errors='coerce').mean():.2f}")
-        else:
-            st.warning(f"⚠️ Gráfico {i} sem dados/métrica para os filtros selecionados.")
-
-# ---------------------------
-# Dispersão (mantido)
+# Dispersão – controles na sidebar (continua igual)
 # ---------------------------
 st.sidebar.header("Dispersão")
 metricas_all = [c for c in df.select_dtypes(include='number').columns if c not in cols_excluir] or df.select_dtypes(include='number').columns.tolist()
-x = st.sidebar.selectbox("Métrica X:", metricas_all, key="disp::x")
-y = st.sidebar.selectbox("Métrica Y:", metricas_all, key="disp::y")
+x_disp = st.sidebar.selectbox("Métrica X:", metricas_all, key="disp::x")
+y_disp = st.sidebar.selectbox("Métrica Y:", metricas_all, key="disp::y")
 trend = st.sidebar.checkbox("Mostrar linha de tendência", key="disp::trend")
 
-if x in df.columns and y in df.columns:
-    fig3 = px.scatter(df, x=x, y=y, color=trackname_col if trackname_col in df.columns else None,
-                      trendline="ols" if trend else None,
-                      hover_data=[sessionname_col if sessionname_col in df.columns else None,
-                                  lap_col if lap_col in df.columns else None,
-                                  run_col if run_col in df.columns else None],
-                      title="Dispersão")
-    fig3.update_layout(title_font=dict(size=40, color="white"), height=600)
-    st.plotly_chart(fig3, use_container_width=True)
+# ---------------------------
+# Monta as 9 figuras (8 linhas + dispersão) e desenha em grid 3x3
+# ---------------------------
+figs = []
+
+# 8 gráficos de linha
+for i, (y_i, d_i, m_i, s_i) in enumerate(cfgs, start=1):
+    df_g = _apply_filters(base, d_i, m_i, s_i)
+    df_g = _order(df_g)
+    title = f"Gráfico {i}"
+    if y_i in df_g.columns and not df_g.empty:
+        fig = px.line(df_g, x='SessionLapDate', y=y_i, color=trackname_col, markers=True, title=title)
+        fig.update_layout(title_font=dict(size=40, color="white"), height=600, legend_title_text=trackname_col)
+        fig.update_xaxes(type='category', categoryorder='array', categoryarray=df_g['SessionLapDate'].tolist())
+    else:
+        fig = None
+    figs.append((title, fig, df_g, y_i))
+
+# 9º slot: Dispersão
+disp_title = "Dispersão"
+if x_disp in df.columns and y_disp in df.columns:
+    fig_disp = px.scatter(
+        df, x=x_disp, y=y_disp,
+        color=trackname_col if trackname_col in df.columns else None,
+        trendline="ols" if trend else None,
+        hover_data=[sessionname_col if sessionname_col in df.columns else None,
+                    lap_col if lap_col in df.columns else None,
+                    run_col if run_col in df.columns else None],
+        title=disp_title
+    )
+    fig_disp.update_layout(title_font=dict(size=40, color="white"), height=600)
 else:
-    st.info("Selecione métricas numéricas válidas para X e Y na seção Dispersão.")
+    fig_disp = None
+figs.append((disp_title, fig_disp, None, None))
+
+# Desenha em 3 linhas × 3 colunas
+for row_start in range(0, 9, 3):
+    cols = st.columns(3)
+    for j in range(3):
+        idx = row_start + j
+        title, fig, df_used, y_used = figs[idx]
+        with cols[j]:
+            st.subheader(title)
+            if fig is not None:
+                st.plotly_chart(fig, use_container_width=True)
+                # métricas apenas para os 8 line plots
+                if df_used is not None and y_used is not None:
+                    c1,c2,c3 = st.columns(3)
+                    with c1: st.metric("Mínimo", f"{pd.to_numeric(df_used[y_used], errors='coerce').min():.2f}")
+                    with c2: st.metric("Máximo", f"{pd.to_numeric(df_used[y_used], errors='coerce').max():.2f}")
+                    with c3: st.metric("Média",  f"{pd.to_numeric(df_used[y_used], errors='coerce').mean():.2f}")
+            else:
+                st.info("Sem dados para este conjunto de filtros.")
