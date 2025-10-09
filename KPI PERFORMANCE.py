@@ -187,37 +187,45 @@ trend = st.sidebar.checkbox("Mostrar linha de tendência", key="disp::trend")
 # ---------------------------
 figs = []
 
-# 8 gráficos de linha
+# 8 gráficos de linha (AGORA COLORIDOS POR SESSIONNAME)
 for i, (y_i, d_i, m_i, s_i) in enumerate(cfgs, start=1):
     df_g = _apply_filters(base, d_i, m_i, s_i)
     df_g = _order(df_g)
     title = f"Gráfico {i}"
     if y_i in df_g.columns and not df_g.empty:
-        fig = px.line(df_g, x='SessionLapDate', y=y_i, color=trackname_col, markers=True, title=title)
-        fig.update_layout(title_font=dict(size=40, color="white"), height=600, legend_title_text=trackname_col)
+        fig = px.line(
+            df_g, x='SessionLapDate', y=y_i,
+            color=sessionname_col,  # <— cores por SessionName
+            markers=True, title=title
+        )
+        fig.update_layout(
+            title_font=dict(size=40, color="white"),
+            height=600,
+            legend_title_text=sessionname_col  # <— título da legenda
+        )
         fig.update_xaxes(type='category', categoryorder='array', categoryarray=df_g['SessionLapDate'].tolist())
     else:
         fig = None
     figs.append((title, fig, df_g, y_i))
 
-# 9º slot: Dispersão
+# 9º slot: Dispersão (também por SessionName)
 disp_title = "Dispersão"
 if x_disp in df.columns and y_disp in df.columns:
     fig_disp = px.scatter(
         df, x=x_disp, y=y_disp,
-        color=trackname_col if trackname_col in df.columns else None,
+        color=sessionname_col if sessionname_col in df.columns else None,  # <— cores por SessionName
         trendline="ols" if trend else None,
         hover_data=[sessionname_col if sessionname_col in df.columns else None,
                     lap_col if lap_col in df.columns else None,
                     run_col if run_col in df.columns else None],
         title=disp_title
     )
-    fig_disp.update_layout(title_font=dict(size=40, color="white"), height=600)
+    fig_disp.update_layout(title_font=dict(size=40, color="white"), height=600, legend_title_text=sessionname_col)
 else:
     fig_disp = None
 figs.append((disp_title, fig_disp, None, None))
 
-# Desenha em 3 linhas × 3 colunas
+# Desenha em 3 linhas × 3 colunas (G1..G3 | G4..G6 | G7..G8 + Dispersão)
 for row_start in range(0, 9, 3):
     cols = st.columns(3)
     for j in range(3):
