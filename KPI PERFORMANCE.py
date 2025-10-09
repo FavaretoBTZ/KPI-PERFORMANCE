@@ -13,7 +13,6 @@ _SUFFIXES_TO_STRIP = [
 ]
 
 def _normalize(s: str) -> str:
-    """lower, trim, remove accents, collapse spaces/underscores/hífens."""
     s = str(s)
     s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
     s = s.strip().lower()
@@ -22,39 +21,23 @@ def _normalize(s: str) -> str:
     return s
 
 def _strip_metric_suffixes(normalized_name: str) -> str:
-    """
-    Remove sufixos comuns à direita: ' - info / - max / - min / - avg ...'
-    Ex.: 'caralias info' -> 'caralias'
-         'lap   -  info' -> 'lap'
-    """
     tokens = normalized_name.split()
-    # Se último token for um dos sufixos, remova repetidamente
     while tokens and tokens[-1] in _SUFFIXES_TO_STRIP:
         tokens.pop()
     return " ".join(tokens)
 
 def build_normalized_columns_map(df: pd.DataFrame):
-    """
-    Mapeia:
-      - nome normalizado completo -> nome real
-      - nome normalizado sem sufixo -> nome real (prioriza a 1ª ocorrência)
-    """
     norm_map = {}
     for c in df.columns:
         nfull = _normalize(c)
         nbase = _strip_metric_suffixes(nfull)
         if nfull not in norm_map:
             norm_map[nfull] = c
-        # guarde também a versão sem sufixo
         if nbase and nbase not in norm_map:
             norm_map[nbase] = c
     return norm_map
 
 def resolve_columns(df: pd.DataFrame, required_keys: list[str]) -> dict:
-    """
-    Resolve colunas obrigatórias mesmo com nomes diferentes/sufixos.
-    Retorna dict: { required_key -> nome_coluna_real_no_df }
-    """
     norm_map = build_normalized_columns_map(df)
     norm_keys_available = list(norm_map.keys())
 
@@ -71,36 +54,28 @@ def resolve_columns(df: pd.DataFrame, required_keys: list[str]) -> dict:
     resolved = {}
     for key in required_keys:
         candidates = [_normalize(key)] + [_normalize(a) for a in aliases.get(key, [])]
-
         found = None
-        # 1) match direto no mapa (com e sem sufixo)
+
         for cand in candidates:
             if cand in norm_map:
-                found = norm_map[cand]
-                break
+                found = norm_map[cand]; break
 
-        # 2) começa com/contém (ex.: 'caralias info' contém 'caralias')
         if not found:
             for cand in candidates:
-                # tenta "startswith"
                 hits = [k for k in norm_keys_available if k.startswith(cand + " ")]
                 if hits:
-                    found = norm_map[hits[0]]
-                    break
+                    found = norm_map[hits[0]]; break
             if not found:
                 for cand in candidates:
                     hits = [k for k in norm_keys_available if f" {cand} " in f" {k} "]
                     if hits:
-                        found = norm_map[hits[0]]
-                        break
+                        found = norm_map[hits[0]]; break
 
-        # 3) fuzzy (cutoff mais baixo por causa de espaços extras)
         if not found:
             for cand in candidates:
                 hits = get_close_matches(cand, norm_keys_available, n=1, cutoff=0.7)
                 if hits:
-                    found = norm_map[hits[0]]
-                    break
+                    found = norm_map[hits[0]]; break
 
         if found:
             resolved[key] = found
@@ -134,12 +109,12 @@ if uploaded_file:
         lap_col = col_map['lap']
         sessionname_col = col_map['sessionname']
         trackname_col = col_map['trackname']
+        drivername_col = col_map['drivername']
 
         # Formata sessiondate
         if pd.api.types.is_datetime64_any_dtype(df[sessiondate_col]):
             sessiondate_str = df[sessiondate_col].dt.strftime("%Y-%m-%d %H:%M:%S").astype(str)
         else:
-            # tenta converter
             s_try = pd.to_datetime(df[sessiondate_col], errors='coerce')
             sessiondate_str = s_try.dt.strftime("%Y-%m-%d %H:%M:%S").fillna(df[sessiondate_col].astype(str))
 
@@ -151,60 +126,132 @@ if uploaded_file:
             ' | Track ' + df[trackname_col].astype(str)
         )
 
-        # Sidebar - Filtros Line Plot
+        # =========================
+        # Sidebar - Filtros Line Plot (gerais)
+        # =========================
         st.sidebar.header("Filtros Line Plot")
         car_alias = st.sidebar.selectbox("CarAlias:", sorted(df[col_map['caralias']].dropna().astype(str).unique()))
         tracks = ["TODAS"] + sorted(pd.Series(df[trackname_col].dropna().astype(str).unique()).tolist())
         selected_track = st.sidebar.selectbox("Etapa (TrackName):", tracks)
 
-        # métricas = todas numéricas exceto obrigatórias + identificador
+        # métricas
         cols_excluir_reais = [col_map[k] for k in required] + ['SessionLapDate']
         numeric_cols = df.select_dtypes(include='number').columns.tolist()
-        metricas = [c for c in numeric_cols if c not in cols_excluir_reais]
-        if len(metricas) < 1:
-            st.warning("⚠️ Não encontrei métricas numéricas além das colunas obrigatórias.")
-            metricas = numeric_cols
+        metricas = [c for c in numeric_cols if c not in cols_excluir_reais] or numeric_cols
 
         y1 = st.sidebar.selectbox("Métrica para Gráfico 1:", metricas, index=0 if metricas else None)
         y2 = st.sidebar.selectbox("Métrica para Gráfico 2:", metricas, index=1 if len(metricas) > 1 else 0)
 
-        # Filtragem e ordenação
-        df_filtrado = df[df[col_map['caralias']].astype(str) == str(car_alias)]
+        # Base filtrada por CarAlias e Track (comum aos dois gráficos)
+        base = df[df[col_map['caralias']].astype(str) == str(car_alias)]
         if selected_track != "TODAS":
-            df_filtrado = df_filtrado[df_filtrado[trackname_col].astype(str) == str(selected_track)]
+            base = base[base[trackname_col].astype(str) == str(selected_track)]
 
+        # =========================
+        # Filtros INDIVIDUAIS por gráfico (Driver/Session)
+        # =========================
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("Gráfico 1 – Filtros opcionais")
+        enable_driver1 = st.sidebar.checkbox("Filtrar por Driver (G1)")
+        driver1 = None
+        session_mode1 = "Todas"
+        session1 = None
+        if enable_driver1:
+            drivers_g1 = sorted(base[drivername_col].dropna().astype(str).unique())
+            driver1 = st.sidebar.selectbox("Driver (G1):", drivers_g1)
+            session_mode1 = st.sidebar.radio("Sessões (G1):", ["Todas", "Apenas uma"], index=0, horizontal=True)
+            if session_mode1 == "Apenas uma":
+                sessions_g1 = sorted(base[base[drivername_col].astype(str) == driver1][sessionname_col].dropna().astype(str).unique())
+                session1 = st.sidebar.selectbox("SessionName (G1):", sessions_g1)
+
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("Gráfico 2 – Filtros opcionais")
+        enable_driver2 = st.sidebar.checkbox("Filtrar por Driver (G2)")
+        driver2 = None
+        session_mode2 = "Todas"
+        session2 = None
+        if enable_driver2:
+            drivers_g2 = sorted(base[drivername_col].dropna().astype(str).unique())
+            driver2 = st.sidebar.selectbox("Driver (G2):", drivers_g2, key="driver_g2")
+            session_mode2 = st.sidebar.radio("Sessões (G2):", ["Todas", "Apenas uma"], index=0, horizontal=True, key="sessmode_g2")
+            if session_mode2 == "Apenas uma":
+                sessions_g2 = sorted(base[base[drivername_col].astype(str) == driver2][sessionname_col].dropna().astype(str).unique())
+                session2 = st.sidebar.selectbox("SessionName (G2):", sessions_g2, key="sess_g2")
+
+        # Função para aplicar filtros individuais
+        def apply_individual_filters(df_in, driver_sel, mode_sel, session_sel):
+            out = df_in
+            if driver_sel:
+                out = out[out[drivername_col].astype(str) == str(driver_sel)]
+                if mode_sel == "Apenas uma" and session_sel:
+                    out = out[out[sessionname_col].astype(str) == str(session_sel)]
+            return out
+
+        # Ordenação utilitária
         def _safe_num(s): return pd.to_numeric(s, errors='coerce')
+        def order_df(dfin):
+            sdate_ord = pd.to_datetime(dfin[sessiondate_col], errors='coerce')
+            return dfin.assign(
+                __sdate_ord=sdate_ord,
+                __run_ord=_safe_num(dfin[run_col]),
+                __lap_ord=_safe_num(dfin[lap_col]),
+            ).sort_values(by=["__sdate_ord", "__run_ord", "__lap_ord"], kind="mergesort")
 
-        sdate_ord = pd.to_datetime(df_filtrado[sessiondate_col], errors='coerce')
-        df_filtrado = df_filtrado.assign(
-            __sdate_ord=sdate_ord,
-            __run_ord=_safe_num(df_filtrado[run_col]),
-            __lap_ord=_safe_num(df_filtrado[lap_col]),
-        ).sort_values(by=["__sdate_ord", "__run_ord", "__lap_ord"], kind="mergesort")
+        # =========================
+        # Gráfico 1
+        # =========================
+        df_g1 = apply_individual_filters(base, driver1, session_mode1, session1)
+        df_g1 = order_df(df_g1)
 
-        # Gráficos de Linha (2) — layout mantido
-        for y, titulo in zip([y1, y2], ["Gráfico 1", "Gráfico 2"]):
-            if y not in df_filtrado.columns:
-                st.warning(f"⚠️ Métrica '{y}' não encontrada.")
-                continue
-            fig = px.line(
-                df_filtrado,
+        if y1 in df_g1.columns and not df_g1.empty:
+            fig1 = px.line(
+                df_g1,
                 x='SessionLapDate',
-                y=y,
+                y=y1,
                 color=trackname_col,
                 markers=True,
-                title=titulo
+                title="Gráfico 1"
             )
-            fig.update_layout(title_font=dict(size=40, color="white"), height=600, legend_title_text=trackname_col)
-            fig.update_xaxes(type='category', categoryorder='array', categoryarray=df_filtrado['SessionLapDate'].tolist())
-            st.plotly_chart(fig, use_container_width=True)
+            fig1.update_layout(title_font=dict(size=40, color="white"), height=600, legend_title_text=trackname_col)
+            fig1.update_xaxes(type='category', categoryorder='array', categoryarray=df_g1['SessionLapDate'].tolist())
+            st.plotly_chart(fig1, use_container_width=True)
 
             c1, c2, c3 = st.columns(3)
-            with c1: st.metric("Mínimo", f"{pd.to_numeric(df_filtrado[y], errors='coerce').min():.2f}")
-            with c2: st.metric("Máximo", f"{pd.to_numeric(df_filtrado[y], errors='coerce').max():.2f}")
-            with c3: st.metric("Média",  f"{pd.to_numeric(df_filtrado[y], errors='coerce').mean():.2f}")
+            with c1: st.metric("Mínimo", f"{pd.to_numeric(df_g1[y1], errors='coerce').min():.2f}")
+            with c2: st.metric("Máximo", f"{pd.to_numeric(df_g1[y1], errors='coerce').max():.2f}")
+            with c3: st.metric("Média",  f"{pd.to_numeric(df_g1[y1], errors='coerce').mean():.2f}")
+        else:
+            st.warning("⚠️ Gráfico 1 sem dados para os filtros selecionados.")
 
-        # Dispersão — layout mantido
+        # =========================
+        # Gráfico 2
+        # =========================
+        df_g2 = apply_individual_filters(base, driver2, session_mode2, session2)
+        df_g2 = order_df(df_g2)
+
+        if y2 in df_g2.columns and not df_g2.empty:
+            fig2 = px.line(
+                df_g2,
+                x='SessionLapDate',
+                y=y2,
+                color=trackname_col,
+                markers=True,
+                title="Gráfico 2"
+            )
+            fig2.update_layout(title_font=dict(size=40, color="white"), height=600, legend_title_text=trackname_col)
+            fig2.update_xaxes(type='category', categoryorder='array', categoryarray=df_g2['SessionLapDate'].tolist())
+            st.plotly_chart(fig2, use_container_width=True)
+
+            c1, c2, c3 = st.columns(3)
+            with c1: st.metric("Mínimo", f"{pd.to_numeric(df_g2[y2], errors='coerce').min():.2f}")
+            with c2: st.metric("Máximo", f"{pd.to_numeric(df_g2[y2], errors='coerce').max():.2f}")
+            with c3: st.metric("Média",  f"{pd.to_numeric(df_g2[y2], errors='coerce').mean():.2f}")
+        else:
+            st.warning("⚠️ Gráfico 2 sem dados para os filtros selecionados.")
+
+        # =========================
+        # Dispersão (mantido)
+        # =========================
         st.sidebar.header("Dispersão")
         numeric_cols_all = df.select_dtypes(include='number').columns.tolist()
         metricas_all = [c for c in numeric_cols_all if c not in cols_excluir_reais] or numeric_cols_all
@@ -229,5 +276,6 @@ if uploaded_file:
             st.plotly_chart(fig3, use_container_width=True)
         else:
             st.info("Selecione métricas numéricas válidas para X e Y na seção Dispersão.")
+
 else:
     st.info("Envie uma planilha .xlsx para iniciar a análise.")
