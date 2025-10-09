@@ -244,7 +244,7 @@ for i in range(1, 9):
     cfgs.append((i, sidebar_block(i, metricas, enable_compare=(i in (7, 8)))))
 
 # ---------------------------
-# Dispersão – controles na sidebar
+# Dispersão – controles
 # ---------------------------
 st.sidebar.header("Dispersão")
 metricas_all = [c for c in df.select_dtypes(include='number').columns if c not in cols_excluir] or df.select_dtypes(include='number').columns.tolist()
@@ -274,10 +274,17 @@ for i, cfg in cfgs:
             fig = px.line(df_g, x='SessionLapDate', y=y_i, color=sessionname_col,
                           markers=True, title=y_i, custom_data=custom_cols)
             fig.update_traces(hovertemplate=line_hover_template(y_i))
-            fig.update_layout(title_font=dict(size=40, color="white"), height=600,
-                              legend=dict(orientation='v', yanchor='top', y=1,
-                                          xanchor='left', x=1.02, bgcolor='rgba(0,0,0,0.3)',
-                                          font=dict(size=13), title_text=None))
+            fig.update_layout(
+                title_font=dict(size=40, color="white"),
+                height=600,
+                legend=dict(
+                    orientation='v', yanchor='top', y=1,
+                    xanchor='left', x=1.02,
+                    bgcolor='rgba(0,0,0,0.3)',
+                    font=dict(size=13),
+                    title_text=None
+                )
+            )
             fig.update_xaxes(type='category', categoryorder='array', categoryarray=x_vals,
                              tickmode='array', tickvals=tickvals, ticktext=ticktext)
         else:
@@ -295,12 +302,12 @@ for i, cfg in cfgs:
             dfin["DriverSessionGroup"] = label + " / " + dfin[sessionname_col].astype(str)
             return dfin
 
-        df_A = add_group(_order(df_A), str(dA))
-        df_B = add_group(_order(df_B), str(dB))
+        df_A = add_group(_order(df_A), str(dA) if dA is not None else "A")
+        df_B = add_group(_order(df_B), str(dB) if dB is not None else "B")
         df_cmp = pd.concat([df_A, df_B], ignore_index=True)
-        df_cmp, custom_cols = attach_custom_data(df_cmp)
 
         if y_i in df_cmp.columns and not df_cmp.empty:
+            df_cmp, custom_cols = attach_custom_data(df_cmp)
             x_vals = df_cmp['SessionLapDate'].tolist()
             x_texts = df_cmp['XLabelShort'].tolist()
             tickvals, ticktext = sample_ticks(x_vals, x_texts)
@@ -308,10 +315,17 @@ for i, cfg in cfgs:
             fig = px.line(df_cmp, x='SessionLapDate', y=y_i, color="DriverSessionGroup",
                           markers=True, title=y_i, custom_data=custom_cols)
             fig.update_traces(hovertemplate=line_hover_template(y_i))
-            fig.update_layout(title_font=dict(size=40, color="white"), height=600,
-                              legend=dict(orientation='v', yanchor='top', y=1,
-                                          xanchor='left', x=1.02, bgcolor='rgba(0,0,0,0.3)',
-                                          font=dict(size=13), title_text=None))
+            fig.update_layout(
+                title_font=dict(size=40, color="white"),
+                height=600,
+                legend=dict(
+                    orientation='v', yanchor='top', y=1,
+                    xanchor='left', x=1.02,
+                    bgcolor='rgba(0,0,0,0.3)',
+                    font=dict(size=13),
+                    title_text=None
+                )
+            )
             fig.update_xaxes(type='category', categoryorder='array', categoryarray=x_vals,
                              tickmode='array', tickvals=tickvals, ticktext=ticktext)
         else:
@@ -321,14 +335,50 @@ for i, cfg in cfgs:
 # Dispersão
 if x_disp in df.columns and y_disp in df.columns:
     df_disp, custom_cols = attach_custom_data(df)
-    fig_disp = px.scatter(df_disp, x=x_disp, y=y_disp, color=sessionname_col,
-                          trendline="ols" if trend else None,
-                          title=f"{x_disp} vs {y_disp}", custom_data=custom_cols)
+    fig_disp = px.scatter(
+        df_disp, x=x_disp, y=y_disp, color=sessionname_col if sessionname_col in df.columns else None,
+        trendline="ols" if trend else None,
+        title=f"{x_disp} vs {y_disp}",
+        custom_data=custom_cols
+    )
     fig_disp.update_traces(hovertemplate=
         "<b>X</b>: %{x}<br><b>Y</b>: %{y}"
         "<br><b>Lap - Info</b>: %{customdata[0]}"
         "<br><b>SessionName - Info</b>: %{customdata[1]}"
         "<br><b>Track</b>: %{customdata[2]}"
         "<br><b>25ET5</b>: %{customdata[3]}<br><b>25ET6</b>: %{customdata[4]}"
-        "<extra></extra>")
-    fig_disp.update_layout(title_font=dict(size=40, color="white"), height
+        "<extra></extra>"
+    )
+    fig_disp.update_layout(
+        title_font=dict(size=40, color="white"),
+        height=600,
+        legend=dict(
+            orientation='v', yanchor='top', y=1,
+            xanchor='left', x=1.02,
+            bgcolor='rgba(0,0,0,0.3)',
+            font=dict(size=13),
+            title_text=None
+        )
+    )
+else:
+    fig_disp = None
+
+# Render 3 × 3
+all_figs = figs + [(9, fig_disp, None, None)]
+for row_start in range(0, 9, 3):
+    cols = st.columns(3)
+    for j in range(3):
+        slot_idx = row_start + j
+        grid_key = f"grid_{row_start}_{j}"
+        fig_index, fig_obj, df_used, y_used = all_figs[slot_idx]
+        with cols[j]:
+            if fig_obj is not None:
+                st.plotly_chart(fig_obj, use_container_width=True, key=f"plot_{grid_key}_{fig_index}")
+                if df_used is not None and y_used is not None and y_used in df_used.columns:
+                    vec = pd.to_numeric(df_used[y_used], errors='coerce')
+                    c1, c2, c3 = st.columns(3)
+                    with c1: st.metric("Mínimo", f"{vec.min():.2f}")
+                    with c2: st.metric("Máximo", f"{vec.max():.2f}")
+                    with c3: st.metric("Média",  f"{vec.mean():.2f}")
+            else:
+                st.info("Sem dados para este conjunto de filtros.", key=f"info_{grid_key}")
