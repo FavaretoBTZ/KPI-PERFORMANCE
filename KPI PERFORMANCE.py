@@ -206,9 +206,20 @@ y_disp = st.sidebar.selectbox("Métrica Y:", metricas_all, key="disp::y")
 trend = st.sidebar.checkbox("Mostrar linha de tendência", key="disp::trend")
 
 # ---------------------------
-# Monta as 9 figuras e desenha em grid 3×3 (keys únicas para cada chart)
+# Monta as 9 figuras e desenha em grid 3×3 (keys únicas)
+# Tooltips customizados: só Lap, SessionName e Track
 # ---------------------------
 figs = []
+
+# hovertemplate para linhas
+def line_hover_template(metric_title: str) -> str:
+    return (
+        f"<b>{metric_title}</b>: %{{y:.2f}}"
+        "<br>Lap: %{{customdata[0]}}"
+        "<br>Session: %{{customdata[1]}}"
+        "<br>Track: %{{customdata[2]}}"
+        "<extra></extra>"
+    )
 
 for i, cfg in cfgs:
     mode = cfg[0]
@@ -219,9 +230,11 @@ for i, cfg in cfgs:
         if y_i in df_g.columns and not df_g.empty:
             fig = px.line(
                 df_g, x='SessionLapDate', y=y_i,
-                color=sessionname_col,  # cores por SessionName
-                markers=True, title=y_i  # título = métrica
+                color=sessionname_col,
+                markers=True, title=y_i,
+                hover_data=[lap_col, sessionname_col, trackname_col]
             )
+            fig.update_traces(hovertemplate=line_hover_template(y_i))
             fig.update_layout(title_font=dict(size=40, color="white"),
                               height=600, legend_title_text=sessionname_col)
             fig.update_xaxes(type='category', categoryorder='array',
@@ -249,8 +262,10 @@ for i, cfg in cfgs:
             fig = px.line(
                 df_cmp, x='SessionLapDate', y=y_i,
                 color="DriverSessionGroup",
-                markers=True, title=y_i  # título = métrica
+                markers=True, title=y_i,
+                hover_data=[lap_col, sessionname_col, trackname_col]
             )
+            fig.update_traces(hovertemplate=line_hover_template(y_i))
             fig.update_layout(title_font=dict(size=40, color="white"),
                               height=600, legend_title_text="Driver / Session")
             fig.update_xaxes(type='category', categoryorder='array',
@@ -259,16 +274,21 @@ for i, cfg in cfgs:
             fig = None
         figs.append((i, fig, df_cmp, y_i))
 
-# Dispersão (título = X vs Y)
+# Dispersão (título = X vs Y) — hover reduzido
 if x_disp in df.columns and y_disp in df.columns:
     fig_disp = px.scatter(
         df, x=x_disp, y=y_disp,
         color=sessionname_col if sessionname_col in df.columns else None,
         trendline="ols" if trend else None,
-        hover_data=[sessionname_col if sessionname_col in df.columns else None,
-                    lap_col if lap_col in df.columns else None,
-                    run_col if run_col in df.columns else None],
+        hover_data=[lap_col, sessionname_col, trackname_col],
         title=f"{x_disp} vs {y_disp}"
+    )
+    fig_disp.update_traces(hovertemplate=
+        "<b>X</b>: %{x}<br><b>Y</b>: %{y}"
+        "<br>Lap: %{customdata[0]}"
+        "<br>Session: %{customdata[1]}"
+        "<br>Track: %{customdata[2]}"
+        "<extra></extra>"
     )
     fig_disp.update_layout(title_font=dict(size=40, color="white"), height=600, legend_title_text=sessionname_col)
 else:
@@ -279,7 +299,7 @@ all_figs = figs + [(9, fig_disp, None, None)]  # 9º = dispersão
 for row_start in range(0, 9, 3):
     cols = st.columns(3)
     for j in range(3):
-        slot_idx = row_start + j  # 0..8
+        slot_idx = row_start + j
         grid_key = f"grid_{row_start}_{j}"
         fig_index, fig_obj, df_used, y_used = all_figs[slot_idx]
         with cols[j]:
