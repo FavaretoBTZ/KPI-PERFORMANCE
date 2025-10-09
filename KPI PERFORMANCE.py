@@ -402,17 +402,25 @@ else:
     fig_disp = None
 
 # =========================
-# Render 3×3
+# Render 3×3 (keys únicas p/ evitar DuplicateElementId)
 # =========================
 all_figs = figs + [(9, fig_disp, None, None)]
+plot_counter = 0
 for row_start in range(0, 9, 3):
     cols = st.columns(3)
     for j in range(3):
         slot_idx = row_start + j
+        if slot_idx >= len(all_figs):
+            continue
         fig_index, fig_obj, df_used, y_used = all_figs[slot_idx]
         with cols[j]:
             if fig_obj is not None:
-                st.plotly_chart(fig_obj, use_container_width=True)
+                plot_counter += 1
+                st.plotly_chart(
+                    fig_obj,
+                    use_container_width=True,
+                    key=f"plot_{fig_index}_{row_start}_{j}_{plot_counter}"
+                )
                 if df_used is not None and y_used is not None:
                     ys, _, _ = materialize_metric_series(df_used, y_used)
                     vec = pd.to_numeric(ys, errors='coerce')
