@@ -98,15 +98,14 @@ trackname_col  = col_map['trackname']
 drivername_col = col_map['drivername']
 
 # ---------------------------
-# Campos auxiliares
+# Campos auxiliares (ordem + rótulos)
 # ---------------------------
 if pd.api.types.is_datetime64_any_dtype(df[sessiondate_col]):
     sdate_str = df[sessiondate_col].dt.strftime("%Y-%m-%d %H:%M:%S").astype(str)
 else:
-    s_try = pd.to_datetime(df[sessiondate_col], errors='coerce', dayfirst=False)
+    s_try = pd.to_datetime(df[sessiondate_col], errors='coerce')
     sdate_str = s_try.dt.strftime("%Y-%m-%d %H:%M:%S").fillna(df[sessiondate_col].astype(str))
 
-# Chave textual informativa (não será usada como eixo)
 df['SessionLapDate'] = (
     sdate_str +
     ' | Run ' + df[run_col].astype(str) +
@@ -115,7 +114,6 @@ df['SessionLapDate'] = (
     ' | Track ' + df[trackname_col].astype(str)
 )
 
-# Rótulo curto para ticks e hover
 df['XLabelShort'] = (
     'Lap ' + df[lap_col].astype(str) +
     ' | ' + df[sessionname_col].astype(str) +
@@ -123,14 +121,14 @@ df['XLabelShort'] = (
 )
 
 # ---------------------------
-# Sidebar - Filtros
+# Sidebar - Filtros gerais
 # ---------------------------
 st.sidebar.header("Filtros Line Plot")
 car_alias = st.sidebar.selectbox("CarAlias:", sorted(df[col_map['caralias']].dropna().astype(str).unique()))
 tracks = ["TODAS"] + sorted(pd.Series(df[trackname_col].dropna().astype(str).unique()).tolist())
 selected_track = st.sidebar.selectbox("Etapa (TrackName):", tracks)
 
-cols_excluir = [col_map[k] for k in required] + ['SessionLapDate', 'XLabelShort', '__xidx']
+cols_excluir = [col_map[k] for k in required] + ['SessionLapDate', 'XLabelShort']
 metricas = [c for c in df.select_dtypes(include='number').columns if c not in cols_excluir]
 if not metricas:
     metricas = df.select_dtypes(include='number').columns.tolist()
@@ -142,6 +140,7 @@ if selected_track != "TODAS":
 # ---------------------------
 # Utils
 # ---------------------------
+def _safe_num(s): return pd.to_numeric(s, errors='coerce')
 _num_pat = re.compile(r"[-+]?\d*[\.,]?\d+")
 
 def _extract_num_series(series: pd.Series) -> pd.Series:
@@ -157,14 +156,11 @@ def _order(dfin: pd.DataFrame) -> pd.DataFrame:
     sdate_ord = pd.to_datetime(dfin[sessiondate_col], errors='coerce')
     run_num = _extract_num_series(dfin[run_col])
     lap_num = _extract_num_series(dfin[lap_col])
-    # índice numérico cronológico estável
-    dsorted = dfin.assign(
+    return dfin.assign(
         __sdate_ord=sdate_ord,
         __run_ord=run_num,
-        __lap_ord=lap_num
-    ).sort_values(by=["__sdate_ord","__run_ord","__lap_ord"], kind="mergesort").copy()
-    dsorted["__xidx"] = np.arange(len(dsorted))  # eixo X numérico
-    return dsorted
+        __lap_ord=lap_num,
+    ).sort_values(by=["__sdate_ord","__run_ord","__lap_ord"], kind="mergesort")
 
 def _apply_filters(df_in, driver_sel, mode_sel, session_sel):
     out = df_in
@@ -174,52 +170,42 @@ def _apply_filters(df_in, driver_sel, mode_sel, session_sel):
             out = out[out[sessionname_col].astype(str) == str(session_sel)]
     return out
 
-def sample_ticks_idx(xidx: np.ndarray, labels: list[str], max_ticks: int = 30):
-    n = len(xidx)
+def sample_ticks(x_vals: list[str], x_texts: list[str], max_ticks: int = 30):
+    n = len(x_vals)
     if n <= max_ticks:
-        return xidx.tolist(), labels
+        return x_vals, x_texts
     step = max(1, n // max_ticks)
     idx = list(range(0, n, step))
-    if idx[-1] != n - 1: idx.append(n - 1)
-    return [int(xidx[i]) for i in idx], [labels[i] for i in idx]
+    if idx[-1] != n - 1:
+        idx.append(n - 1)
+    return [x_vals[i] for i in idx], [x_texts[i] for i in idx]
 
 # ---------------------------
-# Hover helpers
+# Hover (texto construído por ponto, sem "null")
 # ---------------------------
-def attach_custom_cols(dfin: pd.DataFrame):
-    dfin = dfin.copy()
-    dfin["__lap_info"]   = dfin[lap_col].astype(str)
-    dfin["__sess_info"]  = dfin[sessionname_col].astype(str)
-    dfin["__track_info"] = dfin[trackname_col].astype(str)
-    for opt in ["25ET5","25ET6"]:
-        dfin[f"__{opt}"] = dfin[opt] if opt in dfin.columns else np.nan
-    return dfin
-
 def build_hovertext(dfin: pd.DataFrame, metric_col: str) -> list[str]:
     y = pd.to_numeric(dfin[metric_col], errors='coerce')
-    xlab = dfin["XLabelShort"].astype(str)
-    lap  = dfin["__lap_info"].astype(str)
-    sess = dfin["__sess_info"].astype(str)
-    trk  = dfin["__track_info"].astype(str)
-    et5  = dfin["__25ET5"]
-    et6  = dfin["__25ET6"]
-
-    def fmt(v): 
-        return "—" if pd.isna(v) else f"{v:.3f}"
+    def fmt(v): return "—" if pd.isna(v) else f"{v:.3f}"
 
     base = (
         "<b>" + metric_col + "</b>: " + y.map(fmt).astype(str) +
-        "<br><b>X</b>: " + xlab +
-        "<br><b>Lap - Info</b>: " + lap +
-        "<br><b>SessionName - Info</b>: " + sess +
-        "<br><b>Track</b>: " + trk
+        "<br><b>Lap - Info</b>: " + dfin[lap_col].astype(str) +
+        "<br><b>SessionName - Info</b>: " + dfin[sessionname_col].astype(str) +
+        "<br><b>Track</b>: " + dfin[trackname_col].astype(str)
     )
-    with_et5 = np.where(et5.notna(), "<br><b>25ET5</b>: " + pd.to_numeric(et5, errors='coerce').map(fmt).astype(str), "")
-    with_et6 = np.where(et6.notna(), "<br><b>25ET6</b>: " + pd.to_numeric(et6, errors='coerce').map(fmt).astype(str), "")
-    return (base + with_et5 + with_et6).tolist()
+
+    # Acrescenta 25ET5/25ET6 somente se existirem e não forem NaN
+    pieces = base.copy()
+    if "25ET5" in dfin.columns:
+        v = pd.to_numeric(dfin["25ET5"], errors='coerce')
+        pieces = pieces + np.where(v.notna(), "<br><b>25ET5</b>: " + v.map(fmt).astype(str), "")
+    if "25ET6" in dfin.columns:
+        v = pd.to_numeric(dfin["25ET6"], errors='coerce')
+        pieces = pieces + np.where(v.notna(), "<br><b>25ET6</b>: " + v.map(fmt).astype(str), "")
+    return pieces.tolist()
 
 # ---------------------------
-# Sidebar – blocos dos 8 gráficos (G7/G8 com comparação)
+# Sidebar – blocos (G7/G8 com comparação)
 # ---------------------------
 def sidebar_block(i: int, metrics_list, enable_compare=False):
     y = st.sidebar.selectbox(f"Métrica para Gráfico {i}:", metrics_list, key=f"g{i}::metric")
@@ -233,13 +219,15 @@ def sidebar_block(i: int, metrics_list, enable_compare=False):
             sA = None
             if mA == "Apenas uma":
                 sessionsA = sorted(base[base[drivername_col].astype(str)==str(dA)][sessionname_col].dropna().astype(str).unique())
-                if sessionsA: sA = st.sidebar.selectbox(f"SessionName A (G{i}):", sessionsA, key=f"g{i}::sessA")
+                if sessionsA:
+                    sA = st.sidebar.selectbox(f"SessionName A (G{i}):", sessionsA, key=f"g{i}::sessA")
             dB = st.sidebar.selectbox(f"Driver B (G{i}):", drivers, key=f"g{i}::drvB")
             mB = st.sidebar.radio(f"Sessões B (G{i}):", ["Todas","Apenas uma"], index=0, horizontal=True, key=f"g{i}::modeB")
             sB = None
             if mB == "Apenas uma":
                 sessionsB = sorted(base[base[drivername_col].astype(str)==str(dB)][sessionname_col].dropna().astype(str).unique())
-                if sessionsB: sB = st.sidebar.selectbox(f"SessionName B (G{i}):", sessionsB, key=f"g{i}::sessB")
+                if sessionsB:
+                    sB = st.sidebar.selectbox(f"SessionName B (G{i}):", sessionsB, key=f"g{i}::sessB")
             st.sidebar.markdown("---")
             return ("compare", y, dA, mA, sA, dB, mB, sB)
     enable = st.sidebar.checkbox(f"Filtrar por Driver (G{i})", key=f"g{i}::enable")
@@ -250,7 +238,8 @@ def sidebar_block(i: int, metrics_list, enable_compare=False):
         mode = st.sidebar.radio(f"Sessões (G{i}):", ["Todas","Apenas uma"], index=0, horizontal=True, key=f"g{i}::mode")
         if mode == "Apenas uma":
             sessions = sorted(base[base[drivername_col].astype(str)==str(drv)][sessionname_col].dropna().astype(str).unique())
-            if sessions: ses = st.sidebar.selectbox(f"SessionName (G{i}):", sessions, key=f"g{i}::session")
+            if sessions:
+                ses = st.sidebar.selectbox(f"SessionName (G{i}):", sessions, key=f"g{i}::session")
     st.sidebar.markdown("---")
     return ("single", y, drv, (mode or "Todas"), ses)
 
@@ -268,11 +257,8 @@ y_disp = st.sidebar.selectbox("Métrica Y:", metricas_all, key="disp::y")
 trend = st.sidebar.checkbox("Mostrar linha de tendência", key="disp::trend")
 
 # ---------------------------
-# Plotagem
+# Legenda à direita
 # ---------------------------
-figs = []
-
-# --- Legenda à direita (padrão)
 legend_right = dict(
     orientation='v', yanchor='top', y=1,
     xanchor='left', x=1.02,
@@ -281,35 +267,51 @@ legend_right = dict(
     title_text=None
 )
 
+# ---------------------------
+# Plots (3×3)
+# ---------------------------
+figs = []
+
+def draw_line(df_plot, y_col, color_col, legend_title):
+    # ordem cronológica garantida
+    df_plot = _order(df_plot)
+    if y_col not in df_plot.columns or df_plot.empty:
+        return None, df_plot
+
+    x_vals  = df_plot['SessionLapDate'].tolist()
+    x_texts = df_plot['XLabelShort'].tolist()
+    tickvals, ticktext = sample_ticks(x_vals, x_texts, max_ticks=30)
+
+    # cria a figura preservando a ordem categórica
+    fig = px.line(
+        df_plot, x='SessionLapDate', y=y_col,
+        color=color_col, markers=True, title=y_col
+    )
+    # tooltip limpo sem "null"
+    hovertext = build_hovertext(df_plot, y_col)
+    fig.update_traces(hovertext=hovertext, hovertemplate="%{hovertext}<extra></extra>")
+
+    fig.update_layout(
+        title_font=dict(size=40, color="white"),
+        height=600,
+        legend=legend_right,
+        legend_title_text=legend_title
+    )
+    fig.update_xaxes(
+        type='category',
+        categoryorder='array', categoryarray=x_vals,  # segue a ordem cronológica do DataFrame
+        tickmode='array', tickvals=tickvals, ticktext=ticktext
+    )
+    return fig, df_plot
+
+# 8 gráficos (7 e 8 com comparação)
 for i, cfg in cfgs:
     mode = cfg[0]
-
     if mode == "single":
         _, y_i, d_i, m_i, s_i = cfg
         df_g = _apply_filters(base, d_i, m_i, s_i)
-        df_g = _order(df_g)
-        df_g = attach_custom_cols(df_g)
-
-        if y_i in df_g.columns and not df_g.empty:
-            # eixo X numérico cronológico
-            x_idx = df_g["__xidx"].to_numpy()
-            x_labels = df_g["XLabelShort"].tolist()
-            tickvals, ticktext = sample_ticks_idx(x_idx, x_labels, max_ticks=30)
-
-            hovertext = build_hovertext(df_g, y_i)
-
-            fig = px.line(df_g, x="__xidx", y=y_i, color=sessionname_col, markers=True, title=y_i)
-            fig.update_traces(hovertext=hovertext, hovertemplate="%{hovertext}<extra></extra>")
-            fig.update_layout(title_font=dict(size=40, color="white"), height=600,
-                              legend=legend_right, hovermode="x unified")
-            fig.update_xaxes(
-                tickmode='array', tickvals=tickvals, ticktext=ticktext,
-                showgrid=False, title=None
-            )
-        else:
-            fig = None
-        figs.append((i, fig, df_g, y_i))
-
+        fig, used = draw_line(df_g, y_i, sessionname_col, sessionname_col)
+        figs.append((i, fig, used, y_i))
     else:
         _, y_i, dA, mA, sA, dB, mB, sB = cfg
         df_A = _apply_filters(base, dA, mA, sA)
@@ -317,60 +319,30 @@ for i, cfg in cfgs:
 
         def add_group(dfin, label):
             if dfin.empty: return dfin
-            dfin = dfin.copy()
-            dfin["DriverSessionGroup"] = label + " / " + dfin[sessionname_col].astype(str)
-            return dfin
+            d = dfin.copy()
+            d["DriverSessionGroup"] = str(label) + " / " + d[sessionname_col].astype(str)
+            return d
 
-        df_A = add_group(_order(df_A), str(dA) if dA is not None else "A")
-        df_B = add_group(_order(df_B), str(dB) if dB is not None else "B")
-        df_cmp = pd.concat([df_A, df_B], ignore_index=True)
-        df_cmp = attach_custom_cols(df_cmp)
-
-        if y_i in df_cmp.columns and not df_cmp.empty:
-            x_idx = df_cmp["__xidx"].to_numpy()
-            x_labels = df_cmp["XLabelShort"].tolist()
-            tickvals, ticktext = sample_ticks_idx(x_idx, x_labels, max_ticks=30)
-
-            hovertext = build_hovertext(df_cmp, y_i)
-
-            fig = px.line(df_cmp, x="__xidx", y=y_i, color="DriverSessionGroup", markers=True, title=y_i)
-            fig.update_traces(hovertext=hovertext, hovertemplate="%{hovertext}<extra></extra>")
-            fig.update_layout(title_font=dict(size=40, color="white"), height=600,
-                              legend=legend_right, hovermode="x unified")
-            fig.update_xaxes(
-                tickmode='array', tickvals=tickvals, ticktext=ticktext,
-                showgrid=False, title=None
-            )
-        else:
-            fig = None
-        figs.append((i, fig, df_cmp, y_i))
+        df_cmp = pd.concat([add_group(df_A, dA), add_group(df_B, dB)], ignore_index=True)
+        fig, used = draw_line(df_cmp, y_i, "DriverSessionGroup", "Driver / Session")
+        figs.append((i, fig, used, y_i))
 
 # Dispersão
 if x_disp in df.columns and y_disp in df.columns:
-    df_disp = _order(df.copy())
-    df_disp = attach_custom_cols(df_disp)
-
-    hovertext = build_hovertext(df_disp, y_disp)
-
+    df_disp = df.copy()
     fig_disp = px.scatter(
-        df_disp, x="__xidx", y=y_disp,
+        df_disp, x=x_disp, y=y_disp,
         color=sessionname_col if sessionname_col in df.columns else None,
         trendline="ols" if trend else None,
         title=f"{x_disp} vs {y_disp}"
     )
+    hovertext = build_hovertext(df_disp, y_disp)
     fig_disp.update_traces(hovertext=hovertext, hovertemplate="%{hovertext}<extra></extra>")
-    # ticks do scatter: rótulos curtos no mesmo índice cronológico
-    x_idx = df_disp["__xidx"].to_numpy()
-    x_labels = df_disp["XLabelShort"].tolist()
-    tickvals, ticktext = sample_ticks_idx(x_idx, x_labels, max_ticks=30)
-    fig_disp.update_layout(title_font=dict(size=40, color="white"), height=600,
-                           legend=legend_right, hovermode="x unified")
-    fig_disp.update_xaxes(tickmode='array', tickvals=tickvals, ticktext=ticktext,
-                          showgrid=False, title=None)
+    fig_disp.update_layout(title_font=dict(size=40, color="white"), height=600, legend=legend_right)
 else:
     fig_disp = None
 
-# Render 3 × 3
+# Render 3×3
 all_figs = figs + [(9, fig_disp, None, None)]
 for row_start in range(0, 9, 3):
     cols = st.columns(3)
