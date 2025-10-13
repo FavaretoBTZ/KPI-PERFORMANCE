@@ -8,7 +8,10 @@ import numpy as np
 # =========================
 # Config
 # =========================
-METRIC_BLACKLIST = {"DataSet - Slot"}  # remover essa métrica das seleções
+METRIC_BLACKLIST = {
+    "DataSet - Slot",
+    "ELB_TotalKm - Info",
+}
 
 # =========================
 # Normalização de nomes
@@ -38,7 +41,7 @@ def _norm_map(df: pd.DataFrame):
         if nbase and nbase not in m: m[nbase] = c
     return m
 
-def resolve_columns(df: pd.DataFrame, req: list[str]) -> dict:
+def resolve_columns(df: pd.DataFrame, req):
     m = _norm_map(df); keys_av = list(m.keys())
     aliases = {
         "caralias":["caralias","car alias","car","carro","vehicle","car id","car number","carno","n carro"],
@@ -129,12 +132,17 @@ df["XLabel"] = (
 )
 
 # =========================
-# Sidebar - Filtros gerais
+# SIDEBAR: Somente filtros gerais
 # =========================
-st.sidebar.header("Filtros Line Plot")
-car_alias = st.sidebar.selectbox("CarAlias:", sorted(df[col_map['caralias']].dropna().astype(str).unique()))
+st.sidebar.header("Filtros")
+car_alias = st.sidebar.selectbox("Selecione o CarAlias:", sorted(df[col_map['caralias']].dropna().astype(str).unique()))
 tracks = ["TODAS"] + sorted(pd.Series(df[trackname_col].dropna().astype(str).unique()).tolist())
-selected_track = st.sidebar.selectbox("Etapa (TrackName):", tracks)
+selected_track = st.sidebar.selectbox("TrackName - Info:", tracks)
+
+# Base por CarAlias e Track
+base = df[df[col_map['caralias']].astype(str) == str(car_alias)]
+if selected_track != "TODAS":
+    base = base[base[trackname_col].astype(str) == str(selected_track)]
 
 cols_excluir = [col_map[k] for k in required] + ['XKey', 'XLabel']
 
@@ -144,27 +152,20 @@ metricas = [
     if c not in cols_excluir and c not in METRIC_BLACKLIST
 ]
 
-# ===== INCLUSÕES FORÇADAS (garantir presença nas opções, mesmo se dtype não-numérico) =====
+# ===== INCLUSÕES FORÇADAS =====
 forced_labels = [
-    "LapTime - Info",
-    "SessionComment - Info",
-    "Tire - Info",
-    "Full_Brake_intg -Max",                # G3
-    "24_Brake_Balance -Avg",               # G4
-    "Full_throttle_intg -Max",             # G5
-    "G_Comb -Avg",                         # G6 e G9(X)
-    "25_AcLat_Trigger -Avg",               # G7
-    "25_AcLong_Trigger_Positivo -Avg",     # G8
+    # Defaults de G1..G8
+    "pOil - Min","pOil - Max","tWater - Max","pFuel - Min","pFuel - Max",
+    "VBatt - Min","tOilGbx - Max","RPM - Max",
+    # Itens usados em hover e dispersões
+    "LapTime - Info","SessionComment - Info","Tire - Info",
+    "Full_Brake_intg -Max","24_Brake_Balance -Avg","Full_throttle_intg -Max",
+    "G_Comb -Avg","25_AcLat_Trigger -Avg","25_AcLong_Trigger_Positivo -Avg",
 ]
 for lbl in forced_labels:
     real = _find_col_exact(df, lbl)
     if real and (real not in metricas) and (real not in METRIC_BLACKLIST):
         metricas.append(real)
-
-# Base por CarAlias e Track
-base = df[df[col_map['caralias']].astype(str) == str(car_alias)]
-if selected_track != "TODAS":
-    base = base[base[trackname_col].astype(str) == str(selected_track)]
 
 # =========================
 # Utils (ordenação, filtros, ticks)
@@ -179,7 +180,6 @@ def _extract_num_series(series: pd.Series) -> pd.Series:
     return series.map(_one)
 
 def _order(dfin: pd.DataFrame) -> pd.DataFrame:
-    """Ordem: SessionDate -> Run -> Lap -> SessionName -> TrackName."""
     sdate_ord = pd.to_datetime(dfin[sessiondate_col], errors='coerce')
     run_ord   = _extract_num_series(dfin[run_col])
     lap_ord   = _extract_num_series(dfin[lap_col])
@@ -187,26 +187,12 @@ def _order(dfin: pd.DataFrame) -> pd.DataFrame:
     track_ord = dfin[trackname_col].astype(str)
     idx_orig  = np.arange(len(dfin))
     return dfin.assign(
-        __sdate_ord=sdate_ord,
-        __run_ord=run_ord,
-        __lap_ord=lap_ord,
-        __sess_ord=sess_ord,
-        __track_ord=track_ord,
-        __idx=idx_orig
+        __sdate_ord=sdate_ord, __run_ord=run_ord, __lap_ord=lap_ord,
+        __sess_ord=sess_ord, __track_ord=track_ord, __idx=idx_orig
     ).sort_values(
         by=["__sdate_ord","__run_ord","__lap_ord","__sess_ord","__track_ord","__idx"],
         kind="mergesort"
     )
-
-def _apply_filters(dfin, driver, mode, session):
-    if dfin is None or dfin.empty:
-        return dfin
-    dfout = dfin.copy()
-    if driver:
-        dfout = dfout[dfout[drivername_col].astype(str) == str(driver)]
-    if mode == "Apenas uma" and session:
-        dfout = dfout[dfout[sessionname_col].astype(str) == str(session)]
-    return dfout
 
 def sample_ticks(x_vals: list[str], x_texts: list[str], max_ticks: int = 30):
     n = len(x_vals)
@@ -240,43 +226,28 @@ def materialize_metric_series(dfin: pd.DataFrame, y_col: str):
     comment_norm  = _normalize("SessionComment - Info")
     tire_norm     = _normalize("Tire - Info")
 
-    # LapTime -> segundos (float)
     if y_norm == laptime_norm and y_col in dfin.columns:
         serie = dfin[y_col].map(parse_laptime_to_seconds)
         return serie, f"{y_col} (s)", {}
 
-    # SessionComment -> indicador 1/0
     if y_norm == comment_norm and y_col in dfin.columns:
         text = dfin[y_col].astype(str)
         has  = text.str.len().fillna(0) > 0
         serie = has.astype(int)
         return serie, "Comentário presente (1/0)", {"comment_text": text}
 
-    # Tire -> códigos + nomes (mapa) para exibir ticks com rótulos
     if y_norm == tire_norm and y_col in dfin.columns:
         text = dfin[y_col].astype(str)
         cats = pd.Categorical(text)
-        codes = pd.Series(cats.codes, index=dfin.index).replace(-1, np.nan) + 1  # 1..N
+        codes = pd.Series(cats.codes, index=dfin.index).replace(-1, np.nan) + 1
         mapping = {cat: i+1 for i, cat in enumerate(cats.categories)}
         return codes.astype(float), "Tire - Info", {"category_text": text, "category_map": mapping}
 
-    # default: tenta numérico (coerce)
     return pd.to_numeric(dfin[y_col], errors='coerce'), y_col, {}
 
-# =========================
-# Legenda à direita
-# =========================
-legend_right = dict(
-    orientation='v', yanchor='top', y=1,
-    xanchor='left', x=1.02,
-    bgcolor='rgba(0,0,0,0.3)',
-    font=dict(size=13),
-    title_text=None
-)
+legend_right = dict(orientation='v', yanchor='top', y=1, xanchor='left', x=1.02,
+                    bgcolor='rgba(0,0,0,0.3)', font=dict(size=13), title_text=None)
 
-# =========================
-# Hover template
-# =========================
 def hover_template_for(metric_title: str, has_comment: bool, has_category: bool) -> str:
     parts = [
         f"<b>{metric_title}</b>: %{{y:.3f}}",
@@ -293,12 +264,8 @@ def hover_template_for(metric_title: str, has_comment: bool, has_category: bool)
         parts.append(f"<br><b>Tire - Info</b>: %{{customdata[{idx}]}}")
     return "".join(parts) + "<extra></extra>"
 
-# =========================
-# Helper de plot (linhas)
-# =========================
 def draw_line(df_plot, y_col, color_col, legend_title):
     df_plot = _order(df_plot)
-
     y_series, y_title, extra = materialize_metric_series(df_plot, y_col)
     df_plot = df_plot.copy()
     df_plot["__y__"] = y_series
@@ -317,21 +284,15 @@ def draw_line(df_plot, y_col, color_col, legend_title):
         df_plot["__category__"] = extra["category_text"]
         custom_cols.append("__category__")
 
-    fig = px.line(
-        df_plot, x='XKey', y="__y__",
-        color=color_col, markers=True, title=y_title,
-        custom_data=custom_cols
-    )
+    fig = px.line(df_plot, x='XKey', y="__y__", color=color_col, markers=True,
+                  title=y_title, custom_data=custom_cols)
 
     fig.update_traces(hovertemplate=hover_template_for(y_title, has_comment, has_category))
     fig.update_layout(title_font=dict(size=40, color="white"), height=600,
                       legend=legend_right, legend_title_text=legend_title)
-    fig.update_xaxes(type='category',
-                     categoryorder='array', categoryarray=x_vals,
-                     tickmode='array', tickvals=tickvals, ticktext=ticktext,
-                     title=None)
+    fig.update_xaxes(type='category', categoryorder='array', categoryarray=x_vals,
+                     tickmode='array', tickvals=tickvals, ticktext=ticktext, title=None)
 
-    # Y axis para Tire - Info: ticks com nomes
     if has_category and "category_map" in extra:
         name_to_code = extra["category_map"]
         codes = list(name_to_code.values())
@@ -341,20 +302,16 @@ def draw_line(df_plot, y_col, color_col, legend_title):
     return fig, df_plot
 
 # =========================
-# Métricas para dispersão (preparar antes dos widgets p/ default)
+# Dispersão: lista de métricas
 # =========================
-metricas_all = [
-    c for c in df.select_dtypes(include='number').columns
-    if c not in METRIC_BLACKLIST
-]
-# Adiciona forçadas também na dispersão
+metricas_all = [c for c in df.select_dtypes(include='number').columns if c not in METRIC_BLACKLIST]
 for special in set(forced_labels):
     real = _find_col_exact(df, special)
     if real and (real not in metricas_all) and (real not in METRIC_BLACKLIST):
         metricas_all.append(real)
 
 # =========================
-# Defaults iniciais (reset ao mudar planilha)
+# Defaults iniciais
 # =========================
 def _reset_initial_defaults():
     sig = (tuple(sorted(df.columns)), int(df.shape[0]))
@@ -363,84 +320,92 @@ def _reset_initial_defaults():
     st.session_state["_data_sig"] = sig
 
     desired = {
-        1: "LapTime - Info",
-        2: "Tire - Info",
-        3: "Full_Brake_intg -Max",
-        4: "24_Brake_Balance -Avg",
-        5: "Full_throttle_intg -Max",
-        6: "G_Comb -Avg",
-        7: "25_AcLat_Trigger -Avg",
-        8: "25_AcLong_Trigger_Positivo -Avg",
+        1: "pOil - Min",
+        2: "pOil - Max",
+        3: "tWater - Max",
+        4: "pFuel - Min",
+        5: "pFuel - Max",
+        6: "VBatt - Min",
+        7: "tOilGbx - Max",
+        8: "RPM - Max",
     }
     for i, label in desired.items():
         real = _find_col_exact(df, label) or label
-        st.session_state[f"g{i}::metric"] = real if real in metricas else (metricas[0] if metricas else None)
+        if real not in metricas and real not in METRIC_BLACKLIST:
+            metricas.append(real)
+        st.session_state[f"g{i}::metric"] = real
 
-    # Dispersão (G9)
     x_default = _find_col_exact(df, "G_Comb -Avg") or "G_Comb -Avg"
     y_default = _find_col_exact(df, "LapTime - Info") or "LapTime - Info"
-    st.session_state["disp::x"] = x_default if x_default in metricas_all else (metricas_all[0] if metricas_all else None)
-    st.session_state["disp::y"] = y_default if y_default in metricas_all else (metricas_all[0] if metricas_all else None)
+    if x_default not in metricas_all and x_default not in METRIC_BLACKLIST:
+        metricas_all.append(x_default)
+    if y_default not in metricas_all and y_default not in METRIC_BLACKLIST:
+        metricas_all.append(y_default)
+    st.session_state["disp::x"] = x_default
+    st.session_state["disp::y"] = y_default
     st.session_state["disp::trend"] = False
 
 _reset_initial_defaults()
 
 # =========================
-# Sidebar – blocos (G7/G8 com comparação)
+# UI e plots (3×3) — selects acima de cada gráfico
 # =========================
-def sidebar_block(i: int, metrics_list, enable_compare=False):
-    y = st.sidebar.selectbox(f"Métrica para Gráfico {i}:", metrics_list, key=f"g{i}::metric")
-    st.sidebar.markdown("")
-    if enable_compare:
-        cmp_on = st.sidebar.checkbox(f"Modo comparação (G{i}) – 2 drivers", key=f"g{i}::cmp_on")
-        if cmp_on:
-            drivers = sorted(base[drivername_col].dropna().astype(str).unique())
-            dA = st.sidebar.selectbox(f"Driver A (G{i}):", drivers, key=f"g{i}::drvA")
-            mA = st.sidebar.radio(f"Sessões A (G{i}):", ["Todas","Apenas uma"], index=0, horizontal=True, key=f"g{i}::modeA")
-            sA = None
-            if mA == "Apenas uma":
-                sessionsA = sorted(base[base[drivername_col].astype(str)==str(dA)][sessionname_col].dropna().astype(str).unique())
-                if sessionsA: sA = st.sidebar.selectbox(f"SessionName A (G{i}):", sessionsA, key=f"g{i}::sessA")
-            dB = st.sidebar.selectbox(f"Driver B (G{i}):", drivers, key=f"g{i}::drvB")
-            mB = st.sidebar.radio(f"Sessões B (G{i}):", ["Todas","Apenas uma"], index=0, horizontal=True, key=f"g{i}::modeB")
-            sB = None
-            if mB == "Apenas uma":
-                sessionsB = sorted(base[base[drivername_col].astype(str)==str(dB)][sessionname_col].dropna().astype(str).unique())
-                if sessionsB: sB = st.sidebar.selectbox(f"SessionName B (G{i}):", sessionsB, key=f"g{i}::sessB")
-            st.sidebar.markdown("---")
-            return ("compare", y, dA, mA, sA, dB, mB, sB)
-    enable = st.sidebar.checkbox(f"Filtrar por Driver (G{i})", key=f"g{i}::enable")
-    drv = mode = ses = None
-    if enable:
-        drivers = sorted(base[drivername_col].dropna().astype(str).unique())
-        drv = st.sidebar.selectbox(f"Driver (G{i}):", drivers, key=f"g{i}::driver")
-        mode = st.sidebar.radio(f"Sessões (G{i}):", ["Todas","Apenas uma"], index=0, horizontal=True, key=f"g{i}::mode")
-        if mode == "Apenas uma":
-            sessions = sorted(base[base[drivername_col].astype(str)==str(drv)][sessionname_col].dropna().astype(str).unique())
-            if sessions: ses = st.sidebar.selectbox(f"SessionName (G{i}):", sessions, key=f"g{i}::session")
-    st.sidebar.markdown("---")
-    return ("single", y, drv, (mode or "Todas"), ses)
+def graph_card(i: int, base_df: pd.DataFrame):
+    # Caixa de seleção da métrica (no corpo, acima do gráfico)
+    y_i = st.selectbox(
+        f"Selecione a métrica (Y Axis) (G{i}):",
+        metricas, key=f"g{i}::metric"
+    )
 
-# Reaplica base após seleção
-base = df[df[col_map['caralias']].astype(str) == str(car_alias)]
-if selected_track != "TODAS":
-    base = base[base[trackname_col].astype(str) == str(selected_track)]
+    # Controles opcionais de comparação só para G7 e G8
+    cmp_cfg = None
+    if i in (7, 8):
+        with st.expander("Comparar dois drivers (opcional) – G{} ".format(i), expanded=False):
+            cmp_on = st.checkbox("Ativar comparação (G{})".format(i), key=f"g{i}::cmp_on")
+            if cmp_on:
+                drivers = sorted(base_df[drivername_col].dropna().astype(str).unique())
+                dA = st.selectbox(f"Driver A (G{i}):", drivers, key=f"g{i}::drvA")
+                dB = st.selectbox(f"Driver B (G{i}):", drivers, key=f"g{i}::drvB")
+                mA = st.radio(f"Sessões A (G{i}):", ["Todas","Apenas uma"], index=0, horizontal=True, key=f"g{i}::modeA")
+                sA = None
+                if mA == "Apenas uma":
+                    sessionsA = sorted(base_df[base_df[drivername_col].astype(str)==str(dA)][sessionname_col].dropna().astype(str).unique())
+                    if sessionsA: sA = st.selectbox(f"SessionName A (G{i}):", sessionsA, key=f"g{i}::sessA")
+                mB = st.radio(f"Sessões B (G{i}):", ["Todas","Apenas uma"], index=0, horizontal=True, key=f"g{i}::modeB")
+                sB = None
+                if mB == "Apenas uma":
+                    sessionsB = sorted(base_df[base_df[drivername_col].astype(str)==str(dB)][sessionname_col].dropna().astype(str).unique())
+                    if sessionsB: sB = st.selectbox(f"SessionName B (G{i}):", sessionsB, key=f"g{i}::sessB")
+                cmp_cfg = (dA, mA, sA, dB, mB, sB)
 
-cfgs = []
-for i in range(1, 9):
-    cfgs.append((i, sidebar_block(i, metricas, enable_compare=(i in (7, 8)))))
+    # Dados e plot
+    def _apply_filters(dfin, driver=None, mode="Todas", session=None):
+        if dfin is None or dfin.empty:
+            return dfin
+        dfout = dfin.copy()
+        if driver:
+            dfout = dfout[dfout[drivername_col].astype(str) == str(driver)]
+        if mode == "Apenas uma" and session:
+            dfout = dfout[dfout[sessionname_col].astype(str) == str(session)]
+        return dfout
 
-# =========================
-# Dispersão
-# =========================
-st.sidebar.header("Dispersão")
-x_disp = st.sidebar.selectbox("Métrica X:", metricas_all, key="disp::x")
-y_disp = st.sidebar.selectbox("Métrica Y:", metricas_all, key="disp::y")
-trend = st.sidebar.checkbox("Mostrar linha de tendência", key="disp::trend")
+    if cmp_cfg is None:
+        df_g = base_df.copy()
+        fig, used = draw_line(df_g, y_i, sessionname_col, sessionname_col)
+        return fig, used, y_i
+    else:
+        dA, mA, sA, dB, mB, sB = cmp_cfg
+        df_A = _apply_filters(base_df.copy(), dA, mA, sA) if dA else base_df.iloc[0:0].copy()
+        df_B = _apply_filters(base_df.copy(), dB, mB, sB) if dB else base_df.iloc[0:0].copy()
+        def add_group(dfin, label):
+            if dfin.empty: return dfin
+            d = dfin.copy()
+            d["DriverSessionGroup"] = str(label) + " / " + d[sessionname_col].astype(str)
+            return d
+        df_cmp = pd.concat([add_group(df_A, dA or ""), add_group(df_B, dB or "")], ignore_index=True)
+        fig, used = draw_line(df_cmp, y_i, "DriverSessionGroup", "Driver / Session")
+        return fig, used, y_i
 
-# =========================
-# Monta 8 gráficos (7 e 8 com comparação)
-# =========================
 def hover_and_stats(fig_obj, df_used, y_used):
     if df_used is not None and y_used is not None:
         ys, _, _ = materialize_metric_series(df_used, y_used)
@@ -450,64 +415,43 @@ def hover_and_stats(fig_obj, df_used, y_used):
         with c2: st.metric("Máximo", f"{vec.max():.3f}" if vec.notna().any() else "—")
         with c3: st.metric("Média",  f"{vec.mean():.3f}" if vec.notna().any() else "—")
 
-figs = []
-for i, cfg in cfgs:
-    mode = cfg[0]
-    if mode == "single":
-        _, y_i, d_i, m_i, s_i = cfg
-        df_g = _apply_filters(base.copy(), d_i, m_i, s_i)
-        fig, used = draw_line(df_g, y_i, sessionname_col, sessionname_col)
-        figs.append((i, fig, used, y_i))
-    else:
-        _, y_i, dA, mA, sA, dB, mB, sB = cfg
-        df_A = _apply_filters(base.copy(), dA, mA, sA)
-        df_B = _apply_filters(base.copy(), dB, mB, sB)
-        def add_group(dfin, label):
-            if dfin.empty: return dfin
-            d = dfin.copy()
-            d["DriverSessionGroup"] = str(label) + " / " + d[sessionname_col].astype(str)
-            return d
-        df_cmp = pd.concat([add_group(df_A, dA), add_group(df_B, dB)], ignore_index=True)
-        fig, used = draw_line(df_cmp, y_i, "DriverSessionGroup", "Driver / Session")
-        figs.append((i, fig, used, y_i))
-
-# =========================
-# Dispersão (G9)
-# =========================
-if x_disp in df.columns and y_disp in df.columns:
-    df_disp = df.copy()
-    y_series, y_title, _ = materialize_metric_series(df_disp, y_disp)
-    df_disp["__y__"] = y_series
-    fig_disp = px.scatter(
-        df_disp, x=x_disp, y="__y__",
-        color=sessionname_col if sessionname_col in df.columns else None,
-        trendline="ols" if trend else None,
-        title=f"{x_disp} vs {y_title}"
-    )
-    fig_disp.update_layout(title_font=dict(size=40, color="white"), height=600, legend=legend_right)
-else:
-    fig_disp = None
-
-# =========================
 # Render 3×3
-# =========================
-all_figs = figs + [(9, fig_disp, None, None)]
+figs = []
 plot_counter = 0
 for row_start in range(0, 9, 3):
     cols = st.columns(3)
     for j in range(3):
-        slot_idx = row_start + j
-        if slot_idx >= len(all_figs):
-            continue
-        fig_index, fig_obj, df_used, y_used = all_figs[slot_idx]
-        with cols[j]:
-            if fig_obj is not None:
-                plot_counter += 1
+        slot_idx = row_start + j + 1  # gráficos 1..9
+        if slot_idx <= 8:
+            with cols[j]:
+                fig_obj, df_used, y_used = graph_card(slot_idx, base)
                 st.plotly_chart(fig_obj, use_container_width=True,
-                                key=f"plot_{fig_index}_{row_start}_{j}_{plot_counter}")
+                                key=f"plot_{slot_idx}_{row_start}_{j}_{plot_counter}")
                 hover_and_stats(fig_obj, df_used, y_used)
-            else:
-                st.info("Sem dados para este conjunto de filtros.")
+                plot_counter += 1
+        elif slot_idx == 9:
+            with cols[j]:
+                st.subheader("Dispersão (G9)")
+                x_default = st.session_state.get("disp::x")
+                y_default = st.session_state.get("disp::y")
+                x_disp = st.selectbox("Métrica X:", metricas_all, key="disp::x", index=metricas_all.index(x_default) if x_default in metricas_all else 0)
+                y_disp = st.selectbox("Métrica Y:", metricas_all, key="disp::y", index=metricas_all.index(y_default) if y_default in metricas_all else 0)
+                trend = st.checkbox("Mostrar linha de tendência", key="disp::trend")
+
+                if x_disp in df.columns and y_disp in df.columns:
+                    df_disp = df.copy()
+                    y_series, y_title, _ = materialize_metric_series(df_disp, y_disp)
+                    df_disp["__y__"] = y_series
+                    fig_disp = px.scatter(
+                        df_disp, x=x_disp, y="__y__",
+                        color=sessionname_col if sessionname_col in df.columns else None,
+                        trendline="ols" if trend else None,
+                        title=f"{x_disp} vs {y_title}"
+                    )
+                    fig_disp.update_layout(title_font=dict(size=40, color="white"), height=600, legend=legend_right)
+                    st.plotly_chart(fig_disp, use_container_width=True, key="plot_disp")
+                else:
+                    st.info("Selecione X e Y válidos para a dispersão.")
 
 # =====================================================================
 # PLANILHAS NO APP: 1 linha por sessão (volta mais rápida) para cada piloto
@@ -518,31 +462,18 @@ st.header("Planilhas por TrackName - Info (volta mais rápida por sessão)")
 all_tracks = sorted(df[trackname_col].dropna().astype(str).unique().tolist())
 track_sel = st.selectbox("TrackName - Info (planilhas):", all_tracks, index=0, key="export::track")
 
-# Rótulos desejados (AGORA COM AS NOVAS COLUNAS SOLICITADAS)
 wanted_labels = [
     "SessionName - Info", "LapTime - Info", "Tire - Info", "TrackName - Info",
-
-    # EXISTENTES
     "AccX -Min", "AccX -Max", "AccX -Avg",
     "AccY -Min", "AccY -Max", "AccY -Avg",
     "G_Comb -Max", "G_Comb -Avg",
     "25_AcLat_Trigger -Avg",
     "25_AcLong_Trigger_Positivo -Avg",
     "25_AcLong_Trigger_Negativo -Avg",
-
-    # NOVAS SOLICITADAS
-    "CarSpeed -Avg",
-    "Total_Brake -Max",
-    "Total_Brake -Avg",
-    "BrakeAgression -Max",
-    "BrakeAgression -Avg",
-    "Full_Brake_intg -Max",
-    "rPedal -Avg",
-    "24_ThrottleAgression -Max",
-    "24_ThrottleAgression -Avg",
-    "Full_throttle_intg -Max",
-    "25_CrossingTime -Avg",
-    "25_CoastingTime -Avg",
+    "CarSpeed -Avg","Total_Brake -Max","Total_Brake -Avg",
+    "BrakeAgression -Max","BrakeAgression -Avg","Full_Brake_intg -Max",
+    "rPedal -Avg","24_ThrottleAgression -Max","24_ThrottleAgression -Avg",
+    "Full_throttle_intg -Max","25_CrossingTime -Avg","25_CoastingTime -Avg",
 ]
 
 def _find_col_exact_local(df_in: pd.DataFrame, label: str):
@@ -550,7 +481,6 @@ def _find_col_exact_local(df_in: pd.DataFrame, label: str):
     mapping = { _normalize(c): c for c in df_in.columns }
     if norm in mapping:
         return mapping[norm]
-    # tolerância comum (ex.: "laptim - info")
     if "laptime - info" in norm or "laptim - info" in norm:
         for k in mapping:
             if "laptime - info" in k or "laptim - info" in k:
@@ -563,7 +493,6 @@ df_track = df[df[trackname_col].astype(str) == str(track_sel)].copy()
 drivers_in_track = sorted(df_track[drivername_col].dropna().astype(str).unique().tolist())
 
 def fastest_per_session(df_in: pd.DataFrame) -> pd.DataFrame:
-    """Volta mais rápida por sessão, na ordem cronológica (_order)."""
     if df_in.empty:
         return pd.DataFrame(columns=wanted_labels)
 
@@ -585,10 +514,7 @@ def fastest_per_session(df_in: pd.DataFrame) -> pd.DataFrame:
     best = tmp.loc[best_idx].copy()
     best["__sess_order__"] = best[sess_col_real].astype(str).map(sess_order)
 
-    best = best.sort_values(
-        by=["__sess_order__", "__sdate_ord", "__run_ord", "__lap_ord"],
-        kind="mergesort"
-    )
+    best = best.sort_values(by=["__sess_order__", "__sdate_ord", "__run_ord", "__lap_ord"], kind="mergesort")
 
     out_cols = []
     for lbl in wanted_labels:
