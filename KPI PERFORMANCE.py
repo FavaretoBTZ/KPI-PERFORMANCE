@@ -163,7 +163,6 @@ forced_labels = [
 ]
 for lbl in forced_labels:
     real = _find_col_exact(df, lbl)
-    # Se não achar exatamente, ainda assim inclui o literal para não quebrar a UI
     use_lbl = real or lbl
     if use_lbl not in metricas and use_lbl not in METRIC_BLACKLIST:
         metricas.append(use_lbl)
@@ -315,7 +314,7 @@ for special in set(forced_labels):
         metricas_all.append(use_lbl)
 
 # =========================
-# Defaults iniciais (os originais que você definiu)
+# Defaults iniciais (originais)
 # =========================
 def _reset_initial_defaults():
     sig = (tuple(sorted(df.columns)), int(df.shape[0]))
@@ -339,6 +338,7 @@ def _reset_initial_defaults():
             metricas.append(real)
         st.session_state[f"g{i}::metric"] = real
 
+    # G9 defaults
     x_default = _find_col_exact(df, "G_Comb -Avg") or "G_Comb -Avg"
     y_default = _find_col_exact(df, "LapTime - Info") or "LapTime - Info"
     if x_default not in metricas_all and x_default not in METRIC_BLACKLIST:
@@ -416,7 +416,6 @@ def hover_and_stats(fig_obj, df_used, y_used):
         with c2: st.metric("Máximo", f"{vec.max():.3f}" if vec.notna().any() else "—")
         with c3: st.metric("Média",  f"{vec.mean():.3f}" if vec.notna().any() else "—")
 
-figs = []
 plot_counter = 0
 for row_start in range(0, 9, 3):
     cols = st.columns(3)
@@ -430,15 +429,28 @@ for row_start in range(0, 9, 3):
                 hover_and_stats(fig_obj, df_used, y_used)
                 plot_counter += 1
         elif slot_idx == 9:
+            # =========================
+            # Dispersão (G9) — sem index para evitar warning
+            # =========================
             with cols[j]:
                 st.subheader("Dispersão (G9)")
-                x_default = st.session_state.get("disp::x", "G_Comb -Avg")
-                y_default = st.session_state.get("disp::y", "LapTime - Info")
-                x_disp = st.selectbox("Métrica X:", metricas_all, key="disp::x",
-                                      index=metricas_all.index(x_default) if x_default in metricas_all else 0)
-                y_disp = st.selectbox("Métrica Y:", metricas_all, key="disp::y",
-                                      index=metricas_all.index(y_default) if y_default in metricas_all else 0)
-                trend = st.checkbox("Mostrar linha de tendência", key="disp::trend", value=bool(st.session_state.get("disp::trend", False)))
+
+                if "disp::x" not in st.session_state or st.session_state["disp::x"] not in metricas_all:
+                    st.session_state["disp::x"] = _find_col_exact(df, "G_Comb -Avg") or "G_Comb -Avg"
+                    if st.session_state["disp::x"] not in metricas_all:
+                        metricas_all.append(st.session_state["disp::x"])
+
+                if "disp::y" not in st.session_state or st.session_state["disp::y"] not in metricas_all:
+                    st.session_state["disp::y"] = _find_col_exact(df, "LapTime - Info") or "LapTime - Info"
+                    if st.session_state["disp::y"] not in metricas_all:
+                        metricas_all.append(st.session_state["disp::y"])
+
+                if "disp::trend" not in st.session_state:
+                    st.session_state["disp::trend"] = False
+
+                x_disp = st.selectbox("Métrica X:", metricas_all, key="disp::x")  # sem index
+                y_disp = st.selectbox("Métrica Y:", metricas_all, key="disp::y")  # sem index
+                trend  = st.checkbox("Mostrar linha de tendência", key="disp::trend")
 
                 x_ok = (x_disp in df.columns) or (_find_col_exact(df, x_disp) is not None)
                 y_ok = (y_disp in df.columns) or (_find_col_exact(df, y_disp) is not None)
@@ -460,7 +472,7 @@ for row_start in range(0, 9, 3):
                     st.info("Selecione X e Y válidos para a dispersão.")
 
 # =====================================================================
-# PLANILHAS NO APP (volta mais rápida por sessão) — permanece igual
+# PLANILHAS NO APP (volta mais rápida por sessão)
 # =====================================================================
 st.markdown("---")
 st.header("Planilhas por TrackName - Info (volta mais rápida por sessão)")
