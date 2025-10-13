@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import unicodedata, re, os
+import unicodedata, re
 from difflib import get_close_matches
 import numpy as np
 
@@ -143,9 +143,12 @@ metricas = [
     c for c in df.select_dtypes(include='number').columns
     if c not in cols_excluir and c not in METRIC_BLACKLIST
 ]
-for special in ["LapTime - Info", "SessionComment - Info"]:
-    if special in df.columns and special not in metricas and special not in METRIC_BLACKLIST:
-        metricas.append(special)
+# incluir especiais mesmo se não-numéricas
+for special in ["LapTime - Info", "SessionComment - Info", "Tire - Info"]:
+    real = _find_col_exact(df, special)
+    if real and (real not in metricas) and (real not in METRIC_BLACKLIST):
+        metricas.append(real)
+
 if not metricas:
     metricas = [
         c for c in df.select_dtypes(include='number').columns
@@ -228,15 +231,29 @@ def materialize_metric_series(dfin: pd.DataFrame, y_col: str):
     y_norm = _normalize(y_col)
     laptime_norm  = _normalize("LapTime - Info")
     comment_norm  = _normalize("SessionComment - Info")
+    tire_norm     = _normalize("Tire - Info")
 
+    # LapTime -> segundos (float)
     if y_norm == laptime_norm and y_col in dfin.columns:
         serie = dfin[y_col].map(parse_laptime_to_seconds)
         return serie, f"{y_col} (s)", {}
+
+    # SessionComment -> indicador 1/0
     if y_norm == comment_norm and y_col in dfin.columns:
         text = dfin[y_col].astype(str)
         has  = text.str.len().fillna(0) > 0
-        serie = has.astype(int)  # 1 = tem comentário
+        serie = has.astype(int)
         return serie, "Comentário presente (1/0)", {"comment_text": text}
+
+    # Tire -> categoria numérica (1..N) + texto no hover
+    if y_norm == tire_norm and y_col in dfin.columns:
+        text = dfin[y_col].astype(str)
+        cats = pd.Categorical(text)
+        codes = pd.Series(cats.codes, index=dfin.index).replace(-1, np.nan) + 1  # 1..N
+        mapping = {cat: i+1 for i, cat in enumerate(cats.categories)}
+        return codes.astype(float), "Tire - Info (cat)", {"category_text": text, "category_map": mapping}
+
+    # default: tenta numérico
     return pd.to_numeric(dfin[y_col], errors='coerce'), y_col, {}
 
 # =========================
@@ -253,24 +270,28 @@ legend_right = dict(
 # =========================
 # Hover template
 # =========================
-def hover_template_for(metric_title: str, has_comment: bool) -> str:
-    base = (
-        f"<b>{metric_title}</b>: %{{y:.3f}}"
-        "<br><b>Lap - Info</b>: %{customdata[0]}"
-        "<br><b>SessionName - Info</b>: %{customdata[1]}"
-        "<br><b>Track</b>: %{customdata[2]}"
-        "<br><b>X</b>: %{customdata[3]}"
-    )
+def hover_template_for(metric_title: str, has_comment: bool, has_category: bool) -> str:
+    parts = [
+        f"<b>{metric_title}</b>: %{{y:.3f}}",
+        "<br><b>Lap - Info</b>: %{customdata[0]}",
+        "<br><b>SessionName - Info</b>: %{customdata[1]}",
+        "<br><b>Track</b>: %{customdata[2]}",
+        "<br><b>X</b>: %{customdata[3]}",
+    ]
+    idx = 4
     if has_comment:
-        base += "<br><b>SessionComment - Info</b>: %{customdata[4]}"
-    return base + "<extra></extra>"
+        parts.append(f"<br><b>SessionComment - Info</b>: %{{customdata[{idx}]}}")
+        idx += 1
+    if has_category:
+        parts.append(f"<br><b>Tire - Info</b>: %{{customdata[{idx}]}}")
+    return "".join(parts) + "<extra></extra>"
 
 # =========================
 # Helper de plot (linhas)
 # =========================
 def draw_line(df_plot, y_col, color_col, legend_title):
     df_plot = _order(df_plot)
-    if y_col not in df_plot.columns and _normalize(y_col) not in [_normalize("LapTime - Info"), _normalize("SessionComment - Info")]:
+    if y_col not in df_plot.columns and _normalize(y_col) not in [_normalize("LapTime - Info"), _normalize("SessionComment - Info"), _normalize("Tire - Info")]:
         return None, df_plot
 
     y_series, y_title, extra = materialize_metric_series(df_plot, y_col)
@@ -282,18 +303,21 @@ def draw_line(df_plot, y_col, color_col, legend_title):
     tickvals, ticktext = sample_ticks(x_vals, x_texts, max_ticks=30)
 
     custom_cols = [lap_col, sessionname_col, trackname_col, 'XLabel']
-    has_comment = False
-    if "comment_text" in extra:
+    has_comment = "comment_text" in extra
+    has_category = "category_text" in extra
+    if has_comment:
         df_plot["__comment__"] = extra["comment_text"]
         custom_cols.append("__comment__")
-        has_comment = True
+    if has_category:
+        df_plot["__category__"] = extra["category_text"]
+        custom_cols.append("__category__")
 
     fig = px.line(
         df_plot, x='XKey', y="__y__",
         color=color_col, markers=True, title=y_title,
         custom_data=custom_cols
     )
-    fig.update_traces(hovertemplate=hover_template_for(y_title, has_comment))
+    fig.update_traces(hovertemplate=hover_template_for(y_title, has_comment, has_category))
     fig.update_layout(title_font=dict(size=40, color="white"), height=600,
                       legend=legend_right, legend_title_text=legend_title)
     fig.update_xaxes(type='category',
@@ -301,6 +325,52 @@ def draw_line(df_plot, y_col, color_col, legend_title):
                      tickmode='array', tickvals=tickvals, ticktext=ticktext,
                      title=None)
     return fig, df_plot
+
+# =========================
+# Métricas para dispersão (preparar antes dos widgets p/ default)
+# =========================
+metricas_all = [
+    c for c in df.select_dtypes(include='number').columns
+    if c not in METRIC_BLACKLIST
+]
+# Adiciona especiais que podem ser textuais
+for special in ["LapTime - Info", "SessionComment - Info", "Tire - Info"]:
+    real = _find_col_exact(df, special)
+    if real and (real not in metricas_all) and (real not in METRIC_BLACKLIST):
+        metricas_all.append(real)
+
+# =========================
+# Defaults iniciais (reset ao mudar planilha)
+# =========================
+def _reset_initial_defaults():
+    # assinatura simples: colunas + linhas
+    sig = (tuple(sorted(df.columns)), int(df.shape[0]))
+    if st.session_state.get("_data_sig") == sig:
+        return
+    st.session_state["_data_sig"] = sig
+
+    desired = {
+        1: "LapTime - Info",
+        2: "Tire - Info",
+        3: "Full_Brake_intg -Max",
+        4: "24_Brake_Balance -Avg",
+        5: "Full_throttle_intg -Max",
+        6: "G_Comb -Avg",
+        7: "25_AcLat_Trigger -Avg",
+        8: "25_AcLong_Trigger_Positivo -Avg",
+    }
+    for i, label in desired.items():
+        real = _find_col_exact(df, label) or label
+        st.session_state[f"g{i}::metric"] = real if real in metricas else (metricas[0] if metricas else None)
+
+    # Dispersão (G9)
+    x_default = _find_col_exact(df, "G_Comb -Avg") or "G_Comb -Avg"
+    y_default = _find_col_exact(df, "LapTime - Info") or "LapTime - Info"
+    st.session_state["disp::x"] = x_default if x_default in metricas_all else (metricas_all[0] if metricas_all else None)
+    st.session_state["disp::y"] = y_default if y_default in metricas_all else (metricas_all[0] if metricas_all else None)
+    st.session_state["disp::trend"] = False
+
+_reset_initial_defaults()
 
 # =========================
 # Sidebar – blocos (G7/G8 com comparação)
@@ -338,6 +408,11 @@ def sidebar_block(i: int, metrics_list, enable_compare=False):
     st.sidebar.markdown("---")
     return ("single", y, drv, (mode or "Todas"), ses)
 
+# Reaplica base após seleção
+base = df[df[col_map['caralias']].astype(str) == str(car_alias)]
+if selected_track != "TODAS":
+    base = base[base[trackname_col].astype(str) == str(selected_track)]
+
 cfgs = []
 for i in range(1, 9):
     cfgs.append((i, sidebar_block(i, metricas, enable_compare=(i in (7, 8)))))
@@ -346,16 +421,6 @@ for i in range(1, 9):
 # Dispersão
 # =========================
 st.sidebar.header("Dispersão")
-metricas_all = [
-    c for c in df.select_dtypes(include='number').columns
-    if c not in cols_excluir and c not in METRIC_BLACKLIST
-] or [
-    c for c in df.select_dtypes(include='number').columns
-    if c not in METRIC_BLACKLIST
-]
-for special in ["LapTime - Info", "SessionComment - Info"]:
-    if special in df.columns and special not in metricas_all and special not in METRIC_BLACKLIST:
-        metricas_all.append(special)
 x_disp = st.sidebar.selectbox("Métrica X:", metricas_all, key="disp::x")
 y_disp = st.sidebar.selectbox("Métrica Y:", metricas_all, key="disp::y")
 trend = st.sidebar.checkbox("Mostrar linha de tendência", key="disp::trend")
@@ -452,11 +517,11 @@ wanted_labels = [
 ]
 
 def _find_col_exact_local(df_in: pd.DataFrame, label: str):
-    # tolera "LapTim - Info" (erro comum)
     norm = _normalize(label)
     mapping = { _normalize(c): c for c in df_in.columns }
     if norm in mapping:
         return mapping[norm]
+    # tolerância para "LapTim - Info"
     if "laptime - info" in norm or "laptim - info" in norm:
         for k in mapping:
             if "laptime - info" in k or "laptim - info" in k:
@@ -471,26 +536,21 @@ df_track = df[df[trackname_col].astype(str) == str(track_sel)].copy()
 drivers_in_track = sorted(df_track[drivername_col].dropna().astype(str).unique().tolist())
 
 def fastest_per_session(df_in: pd.DataFrame) -> pd.DataFrame:
-    """Retorna apenas as linhas da volta mais rápida de cada sessão,
-    ordenadas cronologicamente como nos gráficos (_order)."""
+    """Volta mais rápida por sessão, na ordem cronológica (_order)."""
     if df_in.empty:
         return pd.DataFrame(columns=wanted_labels)
 
-    # Identifica colunas reais
     sess_col_real = _find_col_exact_local(df_in, "SessionName - Info") or sessionname_col
     lap_time_real = _find_col_exact_local(df_in, "LapTime - Info")
     if sess_col_real not in df_in.columns or lap_time_real is None:
         return pd.DataFrame(columns=wanted_labels)
 
-    # Usa a mesma ordenação dos gráficos
     tmp = _order(df_in.copy())
     tmp["__ltime_sec__"] = tmp[lap_time_real].map(parse_laptime_to_seconds)
 
-    # Sequência cronológica das sessões conforme aparecem em tmp
     sess_seq = pd.unique(tmp[sess_col_real].astype(str))
     sess_order = {s: i for i, s in enumerate(sess_seq)}
 
-    # Melhor volta por sessão (mantendo ordem de aparição)
     grp = tmp.dropna(subset=["__ltime_sec__"]).groupby(sess_col_real, sort=False)
     if grp.ngroups == 0:
         return pd.DataFrame(columns=wanted_labels)
@@ -498,13 +558,11 @@ def fastest_per_session(df_in: pd.DataFrame) -> pd.DataFrame:
     best = tmp.loc[best_idx].copy()
     best["__sess_order__"] = best[sess_col_real].astype(str).map(sess_order)
 
-    # Ordena: ordem da sessão -> data/hora -> run -> lap (estável)
     best = best.sort_values(
         by=["__sess_order__", "__sdate_ord", "__run_ord", "__lap_ord"],
         kind="mergesort"
     )
 
-    # Monta as colunas finais com os rótulos desejados
     out_cols = []
     for lbl in wanted_labels:
         src = col_map_export.get(lbl)
