@@ -471,24 +471,40 @@ df_track = df[df[trackname_col].astype(str) == str(track_sel)].copy()
 drivers_in_track = sorted(df_track[drivername_col].dropna().astype(str).unique().tolist())
 
 def fastest_per_session(df_in: pd.DataFrame) -> pd.DataFrame:
-    """Retorna apenas as linhas da volta mais rápida de cada sessão."""
+    """Retorna apenas as linhas da volta mais rápida de cada sessão,
+    ordenadas cronologicamente como nos gráficos (_order)."""
     if df_in.empty:
         return pd.DataFrame(columns=wanted_labels)
 
+    # Identifica colunas reais
     sess_col_real = _find_col_exact_local(df_in, "SessionName - Info") or sessionname_col
     lap_time_real = _find_col_exact_local(df_in, "LapTime - Info")
     if sess_col_real not in df_in.columns or lap_time_real is None:
         return pd.DataFrame(columns=wanted_labels)
 
-    tmp = df_in.copy()
+    # Usa a mesma ordenação dos gráficos
+    tmp = _order(df_in.copy())
     tmp["__ltime_sec__"] = tmp[lap_time_real].map(parse_laptime_to_seconds)
 
-    grp = tmp.dropna(subset=["__ltime_sec__"]).groupby(sess_col_real, sort=True)
+    # Sequência cronológica das sessões conforme aparecem em tmp
+    sess_seq = pd.unique(tmp[sess_col_real].astype(str))
+    sess_order = {s: i for i, s in enumerate(sess_seq)}
+
+    # Melhor volta por sessão (mantendo ordem de aparição)
+    grp = tmp.dropna(subset=["__ltime_sec__"]).groupby(sess_col_real, sort=False)
     if grp.ngroups == 0:
         return pd.DataFrame(columns=wanted_labels)
     best_idx = grp["__ltime_sec__"].idxmin()
     best = tmp.loc[best_idx].copy()
+    best["__sess_order__"] = best[sess_col_real].astype(str).map(sess_order)
 
+    # Ordena: ordem da sessão -> data/hora -> run -> lap (estável)
+    best = best.sort_values(
+        by=["__sess_order__", "__sdate_ord", "__run_ord", "__lap_ord"],
+        kind="mergesort"
+    )
+
+    # Monta as colunas finais com os rótulos desejados
     out_cols = []
     for lbl in wanted_labels:
         src = col_map_export.get(lbl)
@@ -497,11 +513,7 @@ def fastest_per_session(df_in: pd.DataFrame) -> pd.DataFrame:
             out_cols.append(s)
         else:
             out_cols.append(pd.Series([np.nan]*len(best), index=best.index, name=lbl))
-    out = pd.concat(out_cols, axis=1)
-
-    if "SessionName - Info" in out.columns:
-        out = out.sort_values("SessionName - Info", kind="mergesort").reset_index(drop=True)
-
+    out = pd.concat(out_cols, axis=1).reset_index(drop=True)
     return out
 
 if not drivers_in_track:
