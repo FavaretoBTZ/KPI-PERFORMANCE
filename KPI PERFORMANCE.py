@@ -77,7 +77,7 @@ def _find_col_exact(df: pd.DataFrame, label: str):
 # App
 # =========================
 st.set_page_config(layout="wide")
-st.title("KPI VITAIS - Análise Dinâmica")
+st.title("KPI PERFORMANCE - Análise Dinâmica")
 
 uploaded_file = st.file_uploader("Escolha a planilha (.xlsx):", type=["xlsx"])
 if not uploaded_file:
