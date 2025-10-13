@@ -144,17 +144,17 @@ metricas = [
     if c not in cols_excluir and c not in METRIC_BLACKLIST
 ]
 
-# ===== INCLUSÕES FORÇADAS =====
+# ===== INCLUSÕES FORÇADAS (garantir presença nas opções, mesmo se dtype não-numérico) =====
 forced_labels = [
     "LapTime - Info",
     "SessionComment - Info",
     "Tire - Info",
-    "25_AcLat_Trigger -Avg",                # G7
-    "25_AcLong_Trigger_Positivo -Avg",      # G8
-    "Full_Brake_intg -Max",
-    "Full_throttle_intg -Max",
-    "24_Brake_Balance -Avg",
-    "G_Comb -Avg",
+    "Full_Brake_intg -Max",                # G3
+    "24_Brake_Balance -Avg",               # G4
+    "Full_throttle_intg -Max",             # G5
+    "G_Comb -Avg",                         # G6 e G9(X)
+    "25_AcLat_Trigger -Avg",               # G7
+    "25_AcLong_Trigger_Positivo -Avg",     # G8
 ]
 for lbl in forced_labels:
     real = _find_col_exact(df, lbl)
@@ -347,6 +347,7 @@ metricas_all = [
     c for c in df.select_dtypes(include='number').columns
     if c not in METRIC_BLACKLIST
 ]
+# Adiciona forçadas também na dispersão
 for special in set(forced_labels):
     real = _find_col_exact(df, special)
     if real and (real not in metricas_all) and (real not in METRIC_BLACKLIST):
@@ -356,29 +357,26 @@ for special in set(forced_labels):
 # Defaults iniciais (reset ao mudar planilha)
 # =========================
 def _reset_initial_defaults():
+    # "assinatura" do dataset para saber quando resetar
     sig = (tuple(sorted(df.columns)), int(df.shape[0]))
     if st.session_state.get("_data_sig") == sig:
         return
     st.session_state["_data_sig"] = sig
 
-    # Somente os gráficos solicitados com defaults específicos
+    # Defaults EXATOS solicitados
     desired = {
         1: "LapTime - Info",
         2: "Tire - Info",
-        # 3: não especificado → fallback abaixo
+        3: "Full_Brake_intg -Max",
         4: "24_Brake_Balance -Avg",
         5: "Full_throttle_intg -Max",
         6: "G_Comb -Avg",
         7: "25_AcLat_Trigger -Avg",
         8: "25_AcLong_Trigger_Positivo -Avg",
     }
-    # aplica defaults definidos
     for i, label in desired.items():
         real = _find_col_exact(df, label) or label
         st.session_state[f"g{i}::metric"] = real if real in metricas else (metricas[0] if metricas else None)
-
-    # fallback seguro para G3 (não especificado): mantém se já existir; senão, usa 1ª métrica
-    st.session_state.setdefault("g3::metric", metricas[0] if metricas else None)
 
     # Dispersão (G9)
     x_default = _find_col_exact(df, "G_Comb -Avg") or "G_Comb -Avg"
