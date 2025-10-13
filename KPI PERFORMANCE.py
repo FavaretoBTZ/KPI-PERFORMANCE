@@ -138,23 +138,30 @@ selected_track = st.sidebar.selectbox("Etapa (TrackName):", tracks)
 
 cols_excluir = [col_map[k] for k in required] + ['XKey', 'XLabel']
 
-# métricas para gráficos de linha (numéricas + especiais), removendo blacklist
+# métricas para gráficos de linha (numéricas), removendo blacklist
 metricas = [
     c for c in df.select_dtypes(include='number').columns
     if c not in cols_excluir and c not in METRIC_BLACKLIST
 ]
-# incluir especiais mesmo se não-numéricas
-for special in ["LapTime - Info", "SessionComment - Info", "Tire - Info"]:
-    real = _find_col_exact(df, special)
+
+# ===== INCLUSÕES FORÇADAS (aparecem mesmo se dtype não for numérico) =====
+forced_labels = [
+    "LapTime - Info",
+    "SessionComment - Info",
+    "Tire - Info",
+    "25_AcLat_Trigger -Avg",                # G7
+    "25_AcLong_Trigger_Positivo -Avg",      # G8
+    "Full_Brake_intg -Max",
+    "Full_throttle_intg -Max",
+    "24_Brake_Balance -Avg",
+    "G_Comb -Avg",
+]
+for lbl in forced_labels:
+    real = _find_col_exact(df, lbl)
     if real and (real not in metricas) and (real not in METRIC_BLACKLIST):
         metricas.append(real)
 
-if not metricas:
-    metricas = [
-        c for c in df.select_dtypes(include='number').columns
-        if c not in METRIC_BLACKLIST
-    ]
-
+# Base por CarAlias e Track
 base = df[df[col_map['caralias']].astype(str) == str(car_alias)]
 if selected_track != "TODAS":
     base = base[base[trackname_col].astype(str) == str(selected_track)]
@@ -245,15 +252,15 @@ def materialize_metric_series(dfin: pd.DataFrame, y_col: str):
         serie = has.astype(int)
         return serie, "Comentário presente (1/0)", {"comment_text": text}
 
-    # Tire -> categoria numérica (1..N) + texto no hover
+    # Tire -> códigos + nomes (mapa) para exibir ticks com rótulos
     if y_norm == tire_norm and y_col in dfin.columns:
         text = dfin[y_col].astype(str)
-        cats = pd.Categorical(text)
+        cats = pd.Categorical(text)  # ordem alfabética por padrão
         codes = pd.Series(cats.codes, index=dfin.index).replace(-1, np.nan) + 1  # 1..N
         mapping = {cat: i+1 for i, cat in enumerate(cats.categories)}
-        return codes.astype(float), "Tire - Info (cat)", {"category_text": text, "category_map": mapping}
+        return codes.astype(float), "Tire - Info", {"category_text": text, "category_map": mapping}
 
-    # default: tenta numérico
+    # default: tenta numérico (coerce)
     return pd.to_numeric(dfin[y_col], errors='coerce'), y_col, {}
 
 # =========================
@@ -291,8 +298,13 @@ def hover_template_for(metric_title: str, has_comment: bool, has_category: bool)
 # =========================
 def draw_line(df_plot, y_col, color_col, legend_title):
     df_plot = _order(df_plot)
-    if y_col not in df_plot.columns and _normalize(y_col) not in [_normalize("LapTime - Info"), _normalize("SessionComment - Info"), _normalize("Tire - Info")]:
-        return None, df_plot
+    if y_col not in df_plot.columns and _normalize(y_col) not in [
+        _normalize("LapTime - Info"),
+        _normalize("SessionComment - Info"),
+        _normalize("Tire - Info")
+    ]:
+        # mesmo que a coluna não exista literal, ainda pode ser uma das especiais
+        pass
 
     y_series, y_title, extra = materialize_metric_series(df_plot, y_col)
     df_plot = df_plot.copy()
@@ -303,7 +315,7 @@ def draw_line(df_plot, y_col, color_col, legend_title):
     tickvals, ticktext = sample_ticks(x_vals, x_texts, max_ticks=30)
 
     custom_cols = [lap_col, sessionname_col, trackname_col, 'XLabel']
-    has_comment = "comment_text" in extra
+    has_comment  = "comment_text"  in extra
     has_category = "category_text" in extra
     if has_comment:
         df_plot["__comment__"] = extra["comment_text"]
@@ -317,13 +329,28 @@ def draw_line(df_plot, y_col, color_col, legend_title):
         color=color_col, markers=True, title=y_title,
         custom_data=custom_cols
     )
+
+    # Hover
     fig.update_traces(hovertemplate=hover_template_for(y_title, has_comment, has_category))
+
+    # Layout
     fig.update_layout(title_font=dict(size=40, color="white"), height=600,
                       legend=legend_right, legend_title_text=legend_title)
+
+    # X axis (ordem categórica cronológica)
     fig.update_xaxes(type='category',
                      categoryorder='array', categoryarray=x_vals,
                      tickmode='array', tickvals=tickvals, ticktext=ticktext,
                      title=None)
+
+    # Y axis para Tire - Info: trocar códigos por nomes
+    if has_category and "category_map" in extra:
+        # mapping: nome -> código
+        name_to_code = extra["category_map"]
+        codes = list(name_to_code.values())
+        names = list(name_to_code.keys())
+        fig.update_yaxes(tickmode="array", tickvals=codes, ticktext=names)
+
     return fig, df_plot
 
 # =========================
@@ -333,8 +360,8 @@ metricas_all = [
     c for c in df.select_dtypes(include='number').columns
     if c not in METRIC_BLACKLIST
 ]
-# Adiciona especiais que podem ser textuais
-for special in ["LapTime - Info", "SessionComment - Info", "Tire - Info"]:
+# Adiciona especiais e forçadas para dispersão também
+for special in set(forced_labels):
     real = _find_col_exact(df, special)
     if real and (real not in metricas_all) and (real not in METRIC_BLACKLIST):
         metricas_all.append(real)
@@ -343,7 +370,6 @@ for special in ["LapTime - Info", "SessionComment - Info", "Tire - Info"]:
 # Defaults iniciais (reset ao mudar planilha)
 # =========================
 def _reset_initial_defaults():
-    # assinatura simples: colunas + linhas
     sig = (tuple(sorted(df.columns)), int(df.shape[0]))
     if st.session_state.get("_data_sig") == sig:
         return
@@ -521,7 +547,7 @@ def _find_col_exact_local(df_in: pd.DataFrame, label: str):
     mapping = { _normalize(c): c for c in df_in.columns }
     if norm in mapping:
         return mapping[norm]
-    # tolerância para "LapTim - Info"
+    # tolerância comum (ex.: "LapTim - Info")
     if "laptime - info" in norm or "laptim - info" in norm:
         for k in mapping:
             if "laptime - info" in k or "laptim - info" in k:
