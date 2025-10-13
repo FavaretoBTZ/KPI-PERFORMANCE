@@ -255,7 +255,7 @@ def materialize_metric_series(dfin: pd.DataFrame, y_col: str):
     # Tire -> códigos + nomes (mapa) para exibir ticks com rótulos
     if y_norm == tire_norm and y_col in dfin.columns:
         text = dfin[y_col].astype(str)
-        cats = pd.Categorical(text)  # ordem alfabética por padrão
+        cats = pd.Categorical(text)
         codes = pd.Series(cats.codes, index=dfin.index).replace(-1, np.nan) + 1  # 1..N
         mapping = {cat: i+1 for i, cat in enumerate(cats.categories)}
         return codes.astype(float), "Tire - Info", {"category_text": text, "category_map": mapping}
@@ -357,13 +357,11 @@ for special in set(forced_labels):
 # Defaults iniciais (reset ao mudar planilha)
 # =========================
 def _reset_initial_defaults():
-    # "assinatura" do dataset para saber quando resetar
     sig = (tuple(sorted(df.columns)), int(df.shape[0]))
     if st.session_state.get("_data_sig") == sig:
         return
     st.session_state["_data_sig"] = sig
 
-    # Defaults EXATOS solicitados
     desired = {
         1: "LapTime - Info",
         2: "Tire - Info",
@@ -520,15 +518,31 @@ st.header("Planilhas por TrackName - Info (volta mais rápida por sessão)")
 all_tracks = sorted(df[trackname_col].dropna().astype(str).unique().tolist())
 track_sel = st.selectbox("TrackName - Info (planilhas):", all_tracks, index=0, key="export::track")
 
-# Rótulos desejados
+# Rótulos desejados (AGORA COM AS NOVAS COLUNAS SOLICITADAS)
 wanted_labels = [
     "SessionName - Info", "LapTime - Info", "Tire - Info", "TrackName - Info",
+
+    # EXISTENTES
     "AccX -Min", "AccX -Max", "AccX -Avg",
     "AccY -Min", "AccY -Max", "AccY -Avg",
     "G_Comb -Max", "G_Comb -Avg",
     "25_AcLat_Trigger -Avg",
     "25_AcLong_Trigger_Positivo -Avg",
     "25_AcLong_Trigger_Negativo -Avg",
+
+    # NOVAS SOLICITADAS
+    "CarSpeed -Avg",
+    "Total_Brake -Max",
+    "Total_Brake -Avg",
+    "BrakeAgression -Max",
+    "BrakeAgression -Avg",
+    "Full_Brake_intg -Max",
+    "rPedal -Avg",
+    "24_ThrottleAgression -Max",
+    "24_ThrottleAgression -Avg",
+    "Full_throttle_intg -Max",
+    "25_CrossingTime -Avg",
+    "25_CoastingTime -Avg",
 ]
 
 def _find_col_exact_local(df_in: pd.DataFrame, label: str):
@@ -536,6 +550,7 @@ def _find_col_exact_local(df_in: pd.DataFrame, label: str):
     mapping = { _normalize(c): c for c in df_in.columns }
     if norm in mapping:
         return mapping[norm]
+    # tolerância comum (ex.: "laptim - info")
     if "laptime - info" in norm or "laptim - info" in norm:
         for k in mapping:
             if "laptime - info" in k or "laptim - info" in k:
