@@ -138,13 +138,13 @@ selected_track = st.sidebar.selectbox("Etapa (TrackName):", tracks)
 
 cols_excluir = [col_map[k] for k in required] + ['XKey', 'XLabel']
 
-# métricas para gráficos de linha (numéricas), removendo blacklist
+# métricas base (numéricas)
 metricas = [
     c for c in df.select_dtypes(include='number').columns
     if c not in cols_excluir and c not in METRIC_BLACKLIST
 ]
 
-# ===== INCLUSÕES FORÇADAS (aparecem mesmo se dtype não for numérico) =====
+# ===== INCLUSÕES FORÇADAS =====
 forced_labels = [
     "LapTime - Info",
     "SessionComment - Info",
@@ -298,13 +298,6 @@ def hover_template_for(metric_title: str, has_comment: bool, has_category: bool)
 # =========================
 def draw_line(df_plot, y_col, color_col, legend_title):
     df_plot = _order(df_plot)
-    if y_col not in df_plot.columns and _normalize(y_col) not in [
-        _normalize("LapTime - Info"),
-        _normalize("SessionComment - Info"),
-        _normalize("Tire - Info")
-    ]:
-        # mesmo que a coluna não exista literal, ainda pode ser uma das especiais
-        pass
 
     y_series, y_title, extra = materialize_metric_series(df_plot, y_col)
     df_plot = df_plot.copy()
@@ -330,22 +323,16 @@ def draw_line(df_plot, y_col, color_col, legend_title):
         custom_data=custom_cols
     )
 
-    # Hover
     fig.update_traces(hovertemplate=hover_template_for(y_title, has_comment, has_category))
-
-    # Layout
     fig.update_layout(title_font=dict(size=40, color="white"), height=600,
                       legend=legend_right, legend_title_text=legend_title)
-
-    # X axis (ordem categórica cronológica)
     fig.update_xaxes(type='category',
                      categoryorder='array', categoryarray=x_vals,
                      tickmode='array', tickvals=tickvals, ticktext=ticktext,
                      title=None)
 
-    # Y axis para Tire - Info: trocar códigos por nomes
+    # Y axis para Tire - Info: ticks com nomes
     if has_category and "category_map" in extra:
-        # mapping: nome -> código
         name_to_code = extra["category_map"]
         codes = list(name_to_code.values())
         names = list(name_to_code.keys())
@@ -360,7 +347,6 @@ metricas_all = [
     c for c in df.select_dtypes(include='number').columns
     if c not in METRIC_BLACKLIST
 ]
-# Adiciona especiais e forçadas para dispersão também
 for special in set(forced_labels):
     real = _find_col_exact(df, special)
     if real and (real not in metricas_all) and (real not in METRIC_BLACKLIST):
@@ -375,19 +361,24 @@ def _reset_initial_defaults():
         return
     st.session_state["_data_sig"] = sig
 
+    # Somente os gráficos solicitados com defaults específicos
     desired = {
         1: "LapTime - Info",
         2: "Tire - Info",
-        3: "Full_Brake_intg -Max",
+        # 3: não especificado → fallback abaixo
         4: "24_Brake_Balance -Avg",
         5: "Full_throttle_intg -Max",
         6: "G_Comb -Avg",
         7: "25_AcLat_Trigger -Avg",
         8: "25_AcLong_Trigger_Positivo -Avg",
     }
+    # aplica defaults definidos
     for i, label in desired.items():
         real = _find_col_exact(df, label) or label
         st.session_state[f"g{i}::metric"] = real if real in metricas else (metricas[0] if metricas else None)
+
+    # fallback seguro para G3 (não especificado): mantém se já existir; senão, usa 1ª métrica
+    st.session_state.setdefault("g3::metric", metricas[0] if metricas else None)
 
     # Dispersão (G9)
     x_default = _find_col_exact(df, "G_Comb -Avg") or "G_Comb -Avg"
@@ -454,6 +445,15 @@ trend = st.sidebar.checkbox("Mostrar linha de tendência", key="disp::trend")
 # =========================
 # Monta 8 gráficos (7 e 8 com comparação)
 # =========================
+def hover_and_stats(fig_obj, df_used, y_used):
+    if df_used is not None and y_used is not None:
+        ys, _, _ = materialize_metric_series(df_used, y_used)
+        vec = pd.to_numeric(ys, errors='coerce')
+        c1, c2, c3 = st.columns(3)
+        with c1: st.metric("Mínimo", f"{vec.min():.3f}" if vec.notna().any() else "—")
+        with c2: st.metric("Máximo", f"{vec.max():.3f}" if vec.notna().any() else "—")
+        with c3: st.metric("Média",  f"{vec.mean():.3f}" if vec.notna().any() else "—")
+
 figs = []
 for i, cfg in cfgs:
     mode = cfg[0]
@@ -476,7 +476,7 @@ for i, cfg in cfgs:
         figs.append((i, fig, used, y_i))
 
 # =========================
-# Dispersão (opcional)
+# Dispersão (G9)
 # =========================
 if x_disp in df.columns and y_disp in df.columns:
     df_disp = df.copy()
@@ -493,7 +493,7 @@ else:
     fig_disp = None
 
 # =========================
-# Render 3×3 (keys únicas p/ evitar DuplicateElementId)
+# Render 3×3
 # =========================
 all_figs = figs + [(9, fig_disp, None, None)]
 plot_counter = 0
@@ -507,18 +507,9 @@ for row_start in range(0, 9, 3):
         with cols[j]:
             if fig_obj is not None:
                 plot_counter += 1
-                st.plotly_chart(
-                    fig_obj,
-                    use_container_width=True,
-                    key=f"plot_{fig_index}_{row_start}_{j}_{plot_counter}"
-                )
-                if df_used is not None and y_used is not None:
-                    ys, _, _ = materialize_metric_series(df_used, y_used)
-                    vec = pd.to_numeric(ys, errors='coerce')
-                    c1, c2, c3 = st.columns(3)
-                    with c1: st.metric("Mínimo", f"{vec.min():.3f}" if vec.notna().any() else "—")
-                    with c2: st.metric("Máximo", f"{vec.max():.3f}" if vec.notna().any() else "—")
-                    with c3: st.metric("Média",  f"{vec.mean():.3f}" if vec.notna().any() else "—")
+                st.plotly_chart(fig_obj, use_container_width=True,
+                                key=f"plot_{fig_index}_{row_start}_{j}_{plot_counter}")
+                hover_and_stats(fig_obj, df_used, y_used)
             else:
                 st.info("Sem dados para este conjunto de filtros.")
 
@@ -547,17 +538,14 @@ def _find_col_exact_local(df_in: pd.DataFrame, label: str):
     mapping = { _normalize(c): c for c in df_in.columns }
     if norm in mapping:
         return mapping[norm]
-    # tolerância comum (ex.: "LapTim - Info")
     if "laptime - info" in norm or "laptim - info" in norm:
         for k in mapping:
             if "laptime - info" in k or "laptim - info" in k:
                 return mapping[k]
     return None
 
-# Mapa de colunas reais -> rótulos desejados
 col_map_export = { lbl: _find_col_exact_local(df, lbl) for lbl in wanted_labels }
 
-# Subconjunto do track escolhido
 df_track = df[df[trackname_col].astype(str) == str(track_sel)].copy()
 drivers_in_track = sorted(df_track[drivername_col].dropna().astype(str).unique().tolist())
 
