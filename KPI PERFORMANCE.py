@@ -124,7 +124,6 @@ df["XKey"] = (
     " | " + df[sessionname_col].astype(str) +
     " | Track " + df[trackname_col].astype(str)
 )
-
 df["XLabel"] = (
     "Lap " + df[lap_col].astype(str) +
     " | " + df[sessionname_col].astype(str) +
@@ -132,7 +131,7 @@ df["XLabel"] = (
 )
 
 # =========================
-# SIDEBAR: Somente filtros gerais
+# SIDEBAR: apenas filtros gerais
 # =========================
 st.sidebar.header("Filtros")
 car_alias = st.sidebar.selectbox("Selecione o CarAlias:", sorted(df[col_map['caralias']].dropna().astype(str).unique()))
@@ -147,28 +146,30 @@ if selected_track != "TODAS":
 cols_excluir = [col_map[k] for k in required] + ['XKey', 'XLabel']
 
 # métricas base (numéricas)
-metricas = [
-    c for c in df.select_dtypes(include='number').columns
-    if c not in cols_excluir and c not in METRIC_BLACKLIST
-]
+metricas = [c for c in df.select_dtypes(include='number').columns if c not in cols_excluir and c not in METRIC_BLACKLIST]
 
-# ===== INCLUSÕES FORÇADAS =====
+# ===== INCLUSÕES FORÇADAS (defaults pedidos) =====
 forced_labels = [
-    # Defaults de G1..G8
-    "pOil - Min","pOil - Max","tWater - Max","pFuel - Min","pFuel - Max",
-    "VBatt - Min","tOilGbx - Max","RPM - Max",
-    # Itens usados em hover e dispersões
-    "LapTime - Info","SessionComment - Info","Tire - Info",
-    "Full_Brake_intg -Max","24_Brake_Balance -Avg","Full_throttle_intg -Max",
-    "G_Comb -Avg","25_AcLat_Trigger -Avg","25_AcLong_Trigger_Positivo -Avg",
+    "LapTime - Info",
+    "Tire - Info",
+    "Full_Brake_intg -Max",
+    "24_Brake_Balance -Avg",
+    "Full_throttle_intg -Max",
+    "G_Comb -Avg",
+    "25_AcLat_Trigger -Avg",
+    "25_AcLong_Trigger_Positivo -Avg",
+    # extras usados em hover/conversões
+    "SessionComment - Info",
 ]
 for lbl in forced_labels:
     real = _find_col_exact(df, lbl)
-    if real and (real not in metricas) and (real not in METRIC_BLACKLIST):
-        metricas.append(real)
+    # Se não achar exatamente, ainda assim inclui o literal para não quebrar a UI
+    use_lbl = real or lbl
+    if use_lbl not in metricas and use_lbl not in METRIC_BLACKLIST:
+        metricas.append(use_lbl)
 
 # =========================
-# Utils (ordenação, filtros, ticks)
+# Utils (ordenação, ticks)
 # =========================
 _num_pat = re.compile(r"[-+]?\d*[\.,]?\d+")
 
@@ -194,14 +195,12 @@ def _order(dfin: pd.DataFrame) -> pd.DataFrame:
         kind="mergesort"
     )
 
-def sample_ticks(x_vals: list[str], x_texts: list[str], max_ticks: int = 30):
+def sample_ticks(x_vals, x_texts, max_ticks=30):
     n = len(x_vals)
-    if n <= max_ticks:
-        return x_vals, x_texts
+    if n <= max_ticks: return x_vals, x_texts
     step = max(1, n // max_ticks)
     idx = list(range(0, n, step))
-    if idx[-1] != n - 1:
-        idx.append(n - 1)
+    if idx[-1] != n-1: idx.append(n-1)
     return [x_vals[i] for i in idx], [x_texts[i] for i in idx]
 
 # =========================
@@ -210,40 +209,46 @@ def sample_ticks(x_vals: list[str], x_texts: list[str], max_ticks: int = 30):
 def parse_laptime_to_seconds(x) -> float:
     if pd.isna(x): return np.nan
     s = str(x).strip().replace(",", ".")
-    if not s or s.lower() in ["nan", "none"]: return np.nan
+    if not s or s.lower() in ["nan","none"]: return np.nan
     try:
         if ":" in s:
             mm, ss = s.split(":", 1)
-            return float(mm) * 60.0 + float(ss)
+            return float(mm)*60.0 + float(ss)
         return float(s)
     except Exception:
         m = re.search(r"[-+]?\d*\.?\d+", s)
         return float(m.group(0)) if m else np.nan
 
 def materialize_metric_series(dfin: pd.DataFrame, y_col: str):
-    y_norm = _normalize(y_col)
+    # se o literal não existe na planilha, tenta resolver pelo mapa
+    col = y_col if y_col in dfin.columns else _find_col_exact(dfin, y_col) or y_col
+    y_norm = _normalize(col)
     laptime_norm  = _normalize("LapTime - Info")
     comment_norm  = _normalize("SessionComment - Info")
     tire_norm     = _normalize("Tire - Info")
 
-    if y_norm == laptime_norm and y_col in dfin.columns:
-        serie = dfin[y_col].map(parse_laptime_to_seconds)
+    if col in dfin.columns and y_norm == laptime_norm:
+        serie = dfin[col].map(parse_laptime_to_seconds)
         return serie, f"{y_col} (s)", {}
 
-    if y_norm == comment_norm and y_col in dfin.columns:
-        text = dfin[y_col].astype(str)
+    if col in dfin.columns and y_norm == comment_norm:
+        text = dfin[col].astype(str)
         has  = text.str.len().fillna(0) > 0
         serie = has.astype(int)
         return serie, "Comentário presente (1/0)", {"comment_text": text}
 
-    if y_norm == tire_norm and y_col in dfin.columns:
-        text = dfin[y_col].astype(str)
+    if col in dfin.columns and y_norm == tire_norm:
+        text = dfin[col].astype(str)
         cats = pd.Categorical(text)
         codes = pd.Series(cats.codes, index=dfin.index).replace(-1, np.nan) + 1
         mapping = {cat: i+1 for i, cat in enumerate(cats.categories)}
         return codes.astype(float), "Tire - Info", {"category_text": text, "category_map": mapping}
 
-    return pd.to_numeric(dfin[y_col], errors='coerce'), y_col, {}
+    # default
+    if col in dfin.columns:
+        return pd.to_numeric(dfin[col], errors='coerce'), y_col, {}
+    # se ainda não existir, devolve NaN p/ não quebrar
+    return pd.Series([np.nan]*len(dfin), index=dfin.index), y_col, {}
 
 legend_right = dict(orientation='v', yanchor='top', y=1, xanchor='left', x=1.02,
                     bgcolor='rgba(0,0,0,0.3)', font=dict(size=13), title_text=None)
@@ -295,10 +300,9 @@ def draw_line(df_plot, y_col, color_col, legend_title):
 
     if has_category and "category_map" in extra:
         name_to_code = extra["category_map"]
-        codes = list(name_to_code.values())
-        names = list(name_to_code.keys())
-        fig.update_yaxes(tickmode="array", tickvals=codes, ticktext=names)
-
+        fig.update_yaxes(tickmode="array",
+                         tickvals=list(name_to_code.values()),
+                         ticktext=list(name_to_code.keys()))
     return fig, df_plot
 
 # =========================
@@ -306,12 +310,12 @@ def draw_line(df_plot, y_col, color_col, legend_title):
 # =========================
 metricas_all = [c for c in df.select_dtypes(include='number').columns if c not in METRIC_BLACKLIST]
 for special in set(forced_labels):
-    real = _find_col_exact(df, special)
-    if real and (real not in metricas_all) and (real not in METRIC_BLACKLIST):
-        metricas_all.append(real)
+    use_lbl = _find_col_exact(df, special) or special
+    if use_lbl not in metricas_all and use_lbl not in METRIC_BLACKLIST:
+        metricas_all.append(use_lbl)
 
 # =========================
-# Defaults iniciais
+# Defaults iniciais (os originais que você definiu)
 # =========================
 def _reset_initial_defaults():
     sig = (tuple(sorted(df.columns)), int(df.shape[0]))
@@ -320,14 +324,14 @@ def _reset_initial_defaults():
     st.session_state["_data_sig"] = sig
 
     desired = {
-        1: "pOil - Min",
-        2: "pOil - Max",
-        3: "tWater - Max",
-        4: "pFuel - Min",
-        5: "pFuel - Max",
-        6: "VBatt - Min",
-        7: "tOilGbx - Max",
-        8: "RPM - Max",
+        1: "LapTime - Info",
+        2: "Tire - Info",
+        3: "Full_Brake_intg -Max",
+        4: "24_Brake_Balance -Avg",
+        5: "Full_throttle_intg -Max",
+        6: "G_Comb -Avg",
+        7: "25_AcLat_Trigger -Avg",
+        8: "25_AcLong_Trigger_Positivo -Avg",
     }
     for i, label in desired.items():
         real = _find_col_exact(df, label) or label
@@ -348,37 +352,34 @@ def _reset_initial_defaults():
 _reset_initial_defaults()
 
 # =========================
-# UI e plots (3×3) — selects acima de cada gráfico
+# UI/plots (3×3) — select acima de cada gráfico
 # =========================
 def graph_card(i: int, base_df: pd.DataFrame):
-    # Caixa de seleção da métrica (no corpo, acima do gráfico)
     y_i = st.selectbox(
         f"Selecione a métrica (Y Axis) (G{i}):",
         metricas, key=f"g{i}::metric"
     )
 
-    # Controles opcionais de comparação só para G7 e G8
     cmp_cfg = None
     if i in (7, 8):
-        with st.expander("Comparar dois drivers (opcional) – G{} ".format(i), expanded=False):
-            cmp_on = st.checkbox("Ativar comparação (G{})".format(i), key=f"g{i}::cmp_on")
+        with st.expander("Comparar dois drivers (opcional)", expanded=False):
+            cmp_on = st.checkbox("Ativar comparação", key=f"g{i}::cmp_on")
             if cmp_on:
                 drivers = sorted(base_df[drivername_col].dropna().astype(str).unique())
-                dA = st.selectbox(f"Driver A (G{i}):", drivers, key=f"g{i}::drvA")
-                dB = st.selectbox(f"Driver B (G{i}):", drivers, key=f"g{i}::drvB")
-                mA = st.radio(f"Sessões A (G{i}):", ["Todas","Apenas uma"], index=0, horizontal=True, key=f"g{i}::modeA")
+                dA = st.selectbox("Driver A:", drivers, key=f"g{i}::drvA")
+                dB = st.selectbox("Driver B:", drivers, key=f"g{i}::drvB")
+                mA = st.radio("Sessões A:", ["Todas","Apenas uma"], index=0, horizontal=True, key=f"g{i}::modeA")
                 sA = None
                 if mA == "Apenas uma":
                     sessionsA = sorted(base_df[base_df[drivername_col].astype(str)==str(dA)][sessionname_col].dropna().astype(str).unique())
-                    if sessionsA: sA = st.selectbox(f"SessionName A (G{i}):", sessionsA, key=f"g{i}::sessA")
-                mB = st.radio(f"Sessões B (G{i}):", ["Todas","Apenas uma"], index=0, horizontal=True, key=f"g{i}::modeB")
+                    if sessionsA: sA = st.selectbox("SessionName A:", sessionsA, key=f"g{i}::sessA")
+                mB = st.radio("Sessões B:", ["Todas","Apenas uma"], index=0, horizontal=True, key=f"g{i}::modeB")
                 sB = None
                 if mB == "Apenas uma":
                     sessionsB = sorted(base_df[base_df[drivername_col].astype(str)==str(dB)][sessionname_col].dropna().astype(str).unique())
-                    if sessionsB: sB = st.selectbox(f"SessionName B (G{i}):", sessionsB, key=f"g{i}::sessB")
+                    if sessionsB: sB = st.selectbox("SessionName B:", sessionsB, key=f"g{i}::sessB")
                 cmp_cfg = (dA, mA, sA, dB, mB, sB)
 
-    # Dados e plot
     def _apply_filters(dfin, driver=None, mode="Todas", session=None):
         if dfin is None or dfin.empty:
             return dfin
@@ -415,13 +416,12 @@ def hover_and_stats(fig_obj, df_used, y_used):
         with c2: st.metric("Máximo", f"{vec.max():.3f}" if vec.notna().any() else "—")
         with c3: st.metric("Média",  f"{vec.mean():.3f}" if vec.notna().any() else "—")
 
-# Render 3×3
 figs = []
 plot_counter = 0
 for row_start in range(0, 9, 3):
     cols = st.columns(3)
     for j in range(3):
-        slot_idx = row_start + j + 1  # gráficos 1..9
+        slot_idx = row_start + j + 1  # 1..9
         if slot_idx <= 8:
             with cols[j]:
                 fig_obj, df_used, y_used = graph_card(slot_idx, base)
@@ -432,18 +432,24 @@ for row_start in range(0, 9, 3):
         elif slot_idx == 9:
             with cols[j]:
                 st.subheader("Dispersão (G9)")
-                x_default = st.session_state.get("disp::x")
-                y_default = st.session_state.get("disp::y")
-                x_disp = st.selectbox("Métrica X:", metricas_all, key="disp::x", index=metricas_all.index(x_default) if x_default in metricas_all else 0)
-                y_disp = st.selectbox("Métrica Y:", metricas_all, key="disp::y", index=metricas_all.index(y_default) if y_default in metricas_all else 0)
-                trend = st.checkbox("Mostrar linha de tendência", key="disp::trend")
+                x_default = st.session_state.get("disp::x", "G_Comb -Avg")
+                y_default = st.session_state.get("disp::y", "LapTime - Info")
+                x_disp = st.selectbox("Métrica X:", metricas_all, key="disp::x",
+                                      index=metricas_all.index(x_default) if x_default in metricas_all else 0)
+                y_disp = st.selectbox("Métrica Y:", metricas_all, key="disp::y",
+                                      index=metricas_all.index(y_default) if y_default in metricas_all else 0)
+                trend = st.checkbox("Mostrar linha de tendência", key="disp::trend", value=bool(st.session_state.get("disp::trend", False)))
 
-                if x_disp in df.columns and y_disp in df.columns:
+                x_ok = (x_disp in df.columns) or (_find_col_exact(df, x_disp) is not None)
+                y_ok = (y_disp in df.columns) or (_find_col_exact(df, y_disp) is not None)
+                if x_ok and y_ok:
+                    x_col = x_disp if x_disp in df.columns else _find_col_exact(df, x_disp)
+                    y_col = y_disp if y_disp in df.columns else _find_col_exact(df, y_disp)
                     df_disp = df.copy()
-                    y_series, y_title, _ = materialize_metric_series(df_disp, y_disp)
+                    y_series, y_title, _ = materialize_metric_series(df_disp, y_col)
                     df_disp["__y__"] = y_series
                     fig_disp = px.scatter(
-                        df_disp, x=x_disp, y="__y__",
+                        df_disp, x=x_col, y="__y__",
                         color=sessionname_col if sessionname_col in df.columns else None,
                         trendline="ols" if trend else None,
                         title=f"{x_disp} vs {y_title}"
@@ -454,7 +460,7 @@ for row_start in range(0, 9, 3):
                     st.info("Selecione X e Y válidos para a dispersão.")
 
 # =====================================================================
-# PLANILHAS NO APP: 1 linha por sessão (volta mais rápida) para cada piloto
+# PLANILHAS NO APP (volta mais rápida por sessão) — permanece igual
 # =====================================================================
 st.markdown("---")
 st.header("Planilhas por TrackName - Info (volta mais rápida por sessão)")
@@ -479,8 +485,7 @@ wanted_labels = [
 def _find_col_exact_local(df_in: pd.DataFrame, label: str):
     norm = _normalize(label)
     mapping = { _normalize(c): c for c in df_in.columns }
-    if norm in mapping:
-        return mapping[norm]
+    if norm in mapping: return mapping[norm]
     if "laptime - info" in norm or "laptim - info" in norm:
         for k in mapping:
             if "laptime - info" in k or "laptim - info" in k:
@@ -493,9 +498,7 @@ df_track = df[df[trackname_col].astype(str) == str(track_sel)].copy()
 drivers_in_track = sorted(df_track[drivername_col].dropna().astype(str).unique().tolist())
 
 def fastest_per_session(df_in: pd.DataFrame) -> pd.DataFrame:
-    if df_in.empty:
-        return pd.DataFrame(columns=wanted_labels)
-
+    if df_in.empty: return pd.DataFrame(columns=wanted_labels)
     sess_col_real = _find_col_exact_local(df_in, "SessionName - Info") or sessionname_col
     lap_time_real = _find_col_exact_local(df_in, "LapTime - Info")
     if sess_col_real not in df_in.columns or lap_time_real is None:
@@ -508,8 +511,7 @@ def fastest_per_session(df_in: pd.DataFrame) -> pd.DataFrame:
     sess_order = {s: i for i, s in enumerate(sess_seq)}
 
     grp = tmp.dropna(subset=["__ltime_sec__"]).groupby(sess_col_real, sort=False)
-    if grp.ngroups == 0:
-        return pd.DataFrame(columns=wanted_labels)
+    if grp.ngroups == 0: return pd.DataFrame(columns=wanted_labels)
     best_idx = grp["__ltime_sec__"].idxmin()
     best = tmp.loc[best_idx].copy()
     best["__sess_order__"] = best[sess_col_real].astype(str).map(sess_order)
@@ -524,8 +526,7 @@ def fastest_per_session(df_in: pd.DataFrame) -> pd.DataFrame:
             out_cols.append(s)
         else:
             out_cols.append(pd.Series([np.nan]*len(best), index=best.index, name=lbl))
-    out = pd.concat(out_cols, axis=1).reset_index(drop=True)
-    return out
+    return pd.concat(out_cols, axis=1).reset_index(drop=True)
 
 if not drivers_in_track:
     st.info("Não há dados para o Track selecionado.")
@@ -534,7 +535,6 @@ else:
     for drv in drivers_in_track:
         df_drv = df_track[df_track[drivername_col].astype(str) == drv].copy()
         sheet = fastest_per_session(df_drv)
-
         st.subheader(f"{drv} — {track_sel}")
         if sheet.empty:
             st.info("Sem dados válidos de LapTime para compor a planilha.")
