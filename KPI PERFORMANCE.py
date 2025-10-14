@@ -88,31 +88,40 @@ def resolve_columns(df: pd.DataFrame, req):
         if found: out[key] = found
     return out
 
-# ===== Novo: resolução de métricas por base + sufixo =====
-# mapeia os sufixos aceitos para um "alvo" padrão
+# ===== Resolver de métricas por base + sufixo =====
 _SUFFIX_EQUIV = {
     "info": ["info"],
     "min": ["min"],
     "max": ["max"],
     "avg": ["avg","mean","median"],
     "std": ["std"],
-    "ref": ["ref","reference","target"],  # inclui 'target' aqui para fallback
-    "target": ["target","ref","reference"],  # e vice-versa
+    "ref": ["ref","reference","target"],
+    "target": ["target","ref","reference"],
 }
+
+# sinônimos para nomes-base
+_BASE_SYNONYMS = {
+    "tire": ["tyre", "pneu", "tires", "tyres"],
+    "tyre": ["tire", "pneu", "tires", "tyres"],
+    "pneu": ["tire", "tyre", "tires", "tyres"],
+}
+
+def _expand_base_aliases(base: str):
+    base = base.strip().lower()
+    alts = _BASE_SYNONYMS.get(base, [])
+    return [base] + [a for a in alts if a != base]
 
 def _split_target_label(label: str):
     """
     Quebra "25_AcLat_Trigger -Avg" em (base_normalizada_sem_numero, sufixo_normalizado)
     """
     n = _normalize(label)
-    # tenta separar por sufixos conhecidos no final
     toks = n.split()
     suf = None
     if toks and toks[-1] in _SUFFIXES_TO_STRIP:
         suf = toks[-1]
         base = " ".join(toks[:-1])
     else:
-        # fallback: procura padrao ' - Sufixo'
         m = re.search(r"(.*?)[\s\-_/]+(info|min|max|avg|mean|median|std|ref|target)$", n)
         if m:
             base, suf = m.group(1), m.group(2)
@@ -125,14 +134,13 @@ def _suffix_candidates(suf: str):
     suf = (suf or "").strip().lower()
     if suf in _SUFFIX_EQUIV:
         return _SUFFIX_EQUIV[suf] + [suf]
-    # default: tente todos
     return list(_SUFFIX_EQUIV.keys())
 
 def find_metric(df: pd.DataFrame, target_label: str):
     """
     Encontra a coluna real no df equivalente ao target_label,
     independente da ordem e pequenas variações de formatação.
-    Estratégia: exato -> por base (sem número) + sufixo -> fuzzy -> primeiro que bata a base.
+    Estratégia: exato -> base (com sinônimos) + sufixo -> fuzzy -> substring -> norm_map.
     """
     cols = list(df.columns)
     norm_to_orig = _norm_map(df)
@@ -142,58 +150,56 @@ def find_metric(df: pd.DataFrame, target_label: str):
     if n_exact in norm_to_orig:
         return norm_to_orig[n_exact]
 
-    # 2) base + sufixo
+    # 2) base + sufixo (com sinônimos)
     base_need, suf_need = _split_target_label(target_label)
     suf_opts = _suffix_candidates(suf_need)
 
-    # constrói índice por (base_sem_num, sufixo)
-    bucket = {}  # base -> {sufixo : [originals]}
+    # index bucket: base_sem_num -> {sufixo: [colunas]}
+    bucket = {}
     for c in cols:
         nfull = _normalize(c)
         nbase = _strip_metric_suffixes(nfull)
         nbase_wo_num = _strip_leading_numbers(nbase)
-        # sufixo: ultima palavra se estiver nos sufixos conhecidos
         toks = nfull.split()
         csuf = toks[-1] if toks and toks[-1] in _SUFFIXES_TO_STRIP else ""
         bucket.setdefault(nbase_wo_num, {}).setdefault(csuf, []).append(c)
 
-    # 2a) base igual + sufixo desejado
-    if base_need in bucket:
-        for s in suf_opts:
-            if s in bucket[base_need]:
-                return bucket[base_need][s][0]
+    bases_to_try = _expand_base_aliases(base_need)
+    for b_try in bases_to_try:
+        if b_try in bucket:
+            # sufixo desejado
+            for s in suf_opts:
+                if s in bucket[b_try]:
+                    return bucket[b_try][s][0]
+            # qualquer sufixo (preferências)
+            for pref in ["avg","max","min","info","mean","median","std","ref","target",""]:
+                if pref in bucket[b_try]:
+                    return bucket[b_try][pref][0]
+            # qualquer existente
+            for _, lst in bucket[b_try].items():
+                if lst: return lst[0]
 
-        # 2b) base igual + qualquer sufixo
-        # preferência por avg/max/min/info nessa ordem
-        for pref in ["avg","max","min","info","mean","median","std","ref","target",""]:
-            if pref in bucket[base_need]:
-                return bucket[base_need][pref][0]
-        # se existir algum sufixo qualquer
-        for _, lst in bucket[base_need].items():
-            if lst: return lst[0]
-
-    # 3) fuzzy na base
+    # 3) fuzzy na base (com sinônimos)
     bases_av = list(bucket.keys())
-    hits = get_close_matches(base_need, bases_av, n=1, cutoff=0.8)
-    if hits:
-        b = hits[0]
-        for s in suf_opts:
-            if s in bucket[b]:
-                return bucket[b][s][0]
-        # qualquer sufixo
-        for _, lst in bucket[b].items():
-            if lst: return lst[0]
+    for b_alias in bases_to_try:
+        hits = get_close_matches(b_alias, bases_av, n=1, cutoff=0.8)
+        if hits:
+            b = hits[0]
+            for s in suf_opts:
+                if s in bucket[b]:
+                    return bucket[b][s][0]
+            for _, lst in bucket[b].items():
+                if lst: return lst[0]
 
-    # 4) fallback: procura por substring da base em qualquer coluna
+    # 4) substring da base
     for c in cols:
         if base_need and base_need in _strip_leading_numbers(_strip_metric_suffixes(_normalize(c))):
             return c
 
-    # 5) último recurso: se o norm_map tiver a base
+    # 5) fallback para norm_map base
     if base_need in norm_to_orig:
         return norm_to_orig[base_need]
 
-    # nada encontrado
     return None
 
 # =========================
@@ -251,7 +257,7 @@ df["XLabel"] = (
 )
 
 # =========================
-# SIDEBAR: apenas filtros gerais
+# Sidebar: filtros gerais
 # =========================
 st.sidebar.header("Filtros")
 car_alias = st.sidebar.selectbox("Selecione o CarAlias:", sorted(df[col_map['caralias']].dropna().astype(str).unique()))
@@ -265,10 +271,45 @@ if selected_track != "TODAS":
 
 cols_excluir = [col_map[k] for k in required] + ['XKey', 'XLabel']
 
-# métricas base (numéricas)
-metricas = [c for c in df.select_dtypes(include='number').columns if c not in cols_excluir and c not in METRIC_BLACKLIST]
+# =========================
+# Helpers de ordem conforme Excel
+# =========================
+def _unique_preserve(seq):
+    seen = set(); out = []
+    for x in seq:
+        if x is None:
+            continue
+        if x not in seen:
+            seen.add(x); out.append(x)
+    return out
 
-# ===== INCLUSÕES FORÇADAS (defaults pedidos) =====
+def _insert_by_excel_order(df_in: pd.DataFrame, ordered_list, col_to_add):
+    """Insere `col_to_add` na posição correspondente à ordem de df_in.columns."""
+    if col_to_add in ordered_list:
+        return ordered_list
+    if col_to_add not in df_in.columns:
+        ordered_list.append(col_to_add)  # se não existir fisicamente, joga no fim
+        return ordered_list
+    idx_target = df_in.columns.get_loc(col_to_add)
+    for k, c in enumerate(ordered_list):
+        if c in df_in.columns and df_in.columns.get_loc(c) > idx_target:
+            ordered_list.insert(k, col_to_add)
+            break
+    else:
+        ordered_list.append(col_to_add)
+    return ordered_list
+
+# =========================
+# Métricas (ordem do Excel)
+# =========================
+# base numérica seguindo a ordem do Excel
+_numeric_set = set(df.select_dtypes(include='number').columns)
+metricas = []
+for c in df.columns:
+    if c in _numeric_set and c not in METRIC_BLACKLIST and c not in [col_map[k] for k in required] and c not in ("XKey","XLabel"):
+        metricas.append(c)
+
+# inclusões forçadas respeitando a ordem do Excel
 forced_labels = [
     "LapTime - Info",
     "Tire - Info",
@@ -283,8 +324,20 @@ forced_labels = [
 ]
 for lbl in forced_labels:
     real = find_metric(df, lbl) or lbl
-    if real not in metricas and real not in METRIC_BLACKLIST:
-        metricas.append(real)
+    if real not in METRIC_BLACKLIST:
+        metricas = _insert_by_excel_order(df, metricas, real)
+metricas = _unique_preserve(metricas)
+
+# Dispersão (todas as colunas que façam sentido), também em ordem do Excel
+metricas_all = []
+for c in df.columns:
+    if c not in METRIC_BLACKLIST:
+        metricas_all.append(c)
+for special in set(forced_labels):
+    real = find_metric(df, special) or special
+    if real not in METRIC_BLACKLIST:
+        metricas_all = _insert_by_excel_order(df, metricas_all, real)
+metricas_all = _unique_preserve(metricas_all)
 
 # =========================
 # Utils (ordenação, ticks)
@@ -364,9 +417,19 @@ def materialize_metric_series(dfin: pd.DataFrame, y_col: str):
         mapping = {cat: i+1 for i, cat in enumerate(cats.categories)}
         return codes.astype(float), "Tire - Info", {"category_text": text, "category_map": mapping}
 
-    # default
-    if col in dfin.columns:
+    # default numérico
+    if col in dfin.columns and pd.api.types.is_numeric_dtype(dfin[col]):
         return pd.to_numeric(dfin[col], errors='coerce'), y_col, {}
+
+    # fallback categórico universal (texto -> códigos 1..K)
+    if col in dfin.columns and not pd.api.types.is_numeric_dtype(dfin[col]):
+        text = dfin[col].astype(str)
+        cats = pd.Categorical(text)
+        codes = pd.Series(cats.codes, index=dfin.index).replace(-1, np.nan) + 1
+        mapping = {cat: i+1 for i, cat in enumerate(cats.categories)}
+        return codes.astype(float), y_col, {"category_text": text, "category_map": mapping}
+
+    # se ainda não existir, devolve NaN p/ não quebrar
     return pd.Series([np.nan]*len(dfin), index=dfin.index), y_col, {}
 
 legend_right = dict(orientation='v', yanchor='top', y=1, xanchor='left', x=1.02,
@@ -425,15 +488,6 @@ def draw_line(df_plot, y_col, color_col, legend_title):
     return fig, df_plot
 
 # =========================
-# Dispersão: lista de métricas
-# =========================
-metricas_all = [c for c in df.select_dtypes(include='number').columns if c not in METRIC_BLACKLIST]
-for special in set(forced_labels):
-    use_lbl = find_metric(df, special) or special
-    if use_lbl not in metricas_all and use_lbl not in METRIC_BLACKLIST:
-        metricas_all.append(use_lbl)
-
-# =========================
 # Defaults iniciais (originais)
 # =========================
 def _reset_initial_defaults():
@@ -455,16 +509,16 @@ def _reset_initial_defaults():
     for i, label in desired.items():
         real = find_metric(df, label) or label
         if real not in metricas and real not in METRIC_BLACKLIST:
-            metricas.append(real)
+            metricas = _insert_by_excel_order(df, metricas, real)
         st.session_state[f"g{i}::metric"] = real
 
     # G9 defaults
     x_default = find_metric(df, "G_Comb -Avg") or "G_Comb -Avg"
     y_default = find_metric(df, "LapTime - Info") or "LapTime - Info"
     if x_default not in metricas_all and x_default not in METRIC_BLACKLIST:
-        metricas_all.append(x_default)
+        metricas_all = _insert_by_excel_order(df, metricas_all, x_default)
     if y_default not in metricas_all and y_default not in METRIC_BLACKLIST:
-        metricas_all.append(y_default)
+        metricas_all = _insert_by_excel_order(df, metricas_all, y_default)
     st.session_state["disp::x"] = x_default
     st.session_state["disp::y"] = y_default
     st.session_state["disp::trend"] = False
@@ -559,12 +613,12 @@ for row_start in range(0, 9, 3):
                 if "disp::x" not in st.session_state or st.session_state["disp::x"] not in metricas_all:
                     st.session_state["disp::x"] = find_metric(df, "G_Comb -Avg") or "G_Comb -Avg"
                     if st.session_state["disp::x"] not in metricas_all:
-                        metricas_all.append(st.session_state["disp::x"])
+                        metricas_all = _insert_by_excel_order(df, metricas_all, st.session_state["disp::x"])
 
                 if "disp::y" not in st.session_state or st.session_state["disp::y"] not in metricas_all:
                     st.session_state["disp::y"] = find_metric(df, "LapTime - Info") or "LapTime - Info"
                     if st.session_state["disp::y"] not in metricas_all:
-                        metricas_all.append(st.session_state["disp::y"])
+                        metricas_all = _insert_by_excel_order(df, metricas_all, st.session_state["disp::y"])
 
                 if "disp::trend" not in st.session_state:
                     st.session_state["disp::trend"] = False
@@ -616,7 +670,6 @@ wanted_labels = [
 ]
 
 def _find_col_exact_local(df_in: pd.DataFrame, label: str):
-    # agora usa o mesmo motor
     return find_metric(df_in, label)
 
 col_map_export = { lbl: _find_col_exact_local(df, lbl) for lbl in wanted_labels }
