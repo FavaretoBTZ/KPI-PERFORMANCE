@@ -23,7 +23,7 @@ def _normalize(s: str) -> str:
     s = unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("ascii")
     s = s.strip().lower()
     s = s.replace("%", " percent")
-    s = re.sub(r"[^\w\s]", " ", s)           # troca separadores por espaço
+    s = re.sub(r"[^\w\s]", " ", s)
     s = re.sub(r"[_\-/]+"," ", s)
     s = re.sub(r"\s+"," ", s)
     return s
@@ -35,22 +35,20 @@ def _strip_metric_suffixes(n: str) -> str:
     return " ".join(toks)
 
 def _strip_leading_numbers(nbase: str) -> str:
-    # remove prefixos tipo "24 " ou "25 " do início
     return re.sub(r"^\d+\s+", "", nbase).strip()
 
 def _norm_map(df: pd.DataFrame):
     """
-    Cria um mapa robusto:
+    Mapa robusto:
       - chave: normalizado completo
       - chave: base (sem sufixo)
-      - chave: base sem prefixos numericos ("25 ") também
+      - chave: base sem prefixos numéricos
     """
     m = {}
     for c in df.columns:
         nfull = _normalize(c)
         nbase = _strip_metric_suffixes(nfull)
         nbase_wo_num = _strip_leading_numbers(nbase)
-
         for key in filter(None, [nfull, nbase, nbase_wo_num]):
             if key not in m:
                 m[key] = c
@@ -113,20 +111,17 @@ def _expand_base_aliases(base: str):
 
 def _split_target_label(label: str):
     """
-    Quebra "25_AcLat_Trigger -Avg" em (base_normalizada_sem_numero, sufixo_normalizado)
+    "25_AcLat_Trigger -Avg" -> (base_normalizada_sem_numero, sufixo_normalizado)
     """
     n = _normalize(label)
     toks = n.split()
     suf = None
     if toks and toks[-1] in _SUFFIXES_TO_STRIP:
-        suf = toks[-1]
-        base = " ".join(toks[:-1])
+        suf = toks[-1]; base = " ".join(toks[:-1])
     else:
         m = re.search(r"(.*?)[\s\-_/]+(info|min|max|avg|mean|median|std|ref|target)$", n)
-        if m:
-            base, suf = m.group(1), m.group(2)
-        else:
-            base, suf = n, None
+        if m: base, suf = m.group(1), m.group(2)
+        else: base, suf = n, None
     base_wo_num = _strip_leading_numbers(_strip_metric_suffixes(base))
     return base_wo_num.strip(), (suf or "").strip()
 
@@ -138,23 +133,18 @@ def _suffix_candidates(suf: str):
 
 def find_metric(df: pd.DataFrame, target_label: str):
     """
-    Encontra a coluna real no df equivalente ao target_label,
-    independente da ordem e pequenas variações de formatação.
-    Estratégia: exato -> base (com sinônimos) + sufixo -> fuzzy -> substring -> norm_map.
+    Exato -> base (c/ sinônimos) + sufixo -> fuzzy -> substring -> norm_map base
     """
     cols = list(df.columns)
     norm_to_orig = _norm_map(df)
 
-    # 1) match exato via normalização total
     n_exact = _normalize(target_label)
     if n_exact in norm_to_orig:
         return norm_to_orig[n_exact]
 
-    # 2) base + sufixo (com sinônimos)
     base_need, suf_need = _split_target_label(target_label)
     suf_opts = _suffix_candidates(suf_need)
 
-    # index bucket: base_sem_num -> {sufixo: [colunas]}
     bucket = {}
     for c in cols:
         nfull = _normalize(c)
@@ -167,19 +157,15 @@ def find_metric(df: pd.DataFrame, target_label: str):
     bases_to_try = _expand_base_aliases(base_need)
     for b_try in bases_to_try:
         if b_try in bucket:
-            # sufixo desejado
             for s in suf_opts:
                 if s in bucket[b_try]:
                     return bucket[b_try][s][0]
-            # qualquer sufixo (preferências)
             for pref in ["avg","max","min","info","mean","median","std","ref","target",""]:
                 if pref in bucket[b_try]:
                     return bucket[b_try][pref][0]
-            # qualquer existente
             for _, lst in bucket[b_try].items():
                 if lst: return lst[0]
 
-    # 3) fuzzy na base (com sinônimos)
     bases_av = list(bucket.keys())
     for b_alias in bases_to_try:
         hits = get_close_matches(b_alias, bases_av, n=1, cutoff=0.8)
@@ -191,12 +177,10 @@ def find_metric(df: pd.DataFrame, target_label: str):
             for _, lst in bucket[b].items():
                 if lst: return lst[0]
 
-    # 4) substring da base
     for c in cols:
         if base_need and base_need in _strip_leading_numbers(_strip_metric_suffixes(_normalize(c))):
             return c
 
-    # 5) fallback para norm_map base
     if base_need in norm_to_orig:
         return norm_to_orig[base_need]
 
@@ -257,14 +241,13 @@ df["XLabel"] = (
 )
 
 # =========================
-# Sidebar: filtros gerais
+# Sidebar
 # =========================
 st.sidebar.header("Filtros")
 car_alias = st.sidebar.selectbox("Selecione o CarAlias:", sorted(df[col_map['caralias']].dropna().astype(str).unique()))
 tracks = ["TODAS"] + sorted(pd.Series(df[trackname_col].dropna().astype(str).unique()).tolist())
 selected_track = st.sidebar.selectbox("TrackName - Info:", tracks)
 
-# Base por CarAlias e Track
 base = df[df[col_map['caralias']].astype(str) == str(car_alias)]
 if selected_track != "TODAS":
     base = base[base[trackname_col].astype(str) == str(selected_track)]
@@ -277,18 +260,15 @@ cols_excluir = [col_map[k] for k in required] + ['XKey', 'XLabel']
 def _unique_preserve(seq):
     seen = set(); out = []
     for x in seq:
-        if x is None:
-            continue
+        if x is None: continue
         if x not in seen:
             seen.add(x); out.append(x)
     return out
 
 def _insert_by_excel_order(df_in: pd.DataFrame, ordered_list, col_to_add):
-    """Insere `col_to_add` na posição correspondente à ordem de df_in.columns."""
-    if col_to_add in ordered_list:
-        return ordered_list
+    if col_to_add in ordered_list: return ordered_list
     if col_to_add not in df_in.columns:
-        ordered_list.append(col_to_add)  # se não existir fisicamente, joga no fim
+        ordered_list.append(col_to_add)
         return ordered_list
     idx_target = df_in.columns.get_loc(col_to_add)
     for k, c in enumerate(ordered_list):
@@ -302,14 +282,13 @@ def _insert_by_excel_order(df_in: pd.DataFrame, ordered_list, col_to_add):
 # =========================
 # Métricas (ordem do Excel)
 # =========================
-# base numérica seguindo a ordem do Excel
 _numeric_set = set(df.select_dtypes(include='number').columns)
+
 metricas = []
 for c in df.columns:
     if c in _numeric_set and c not in METRIC_BLACKLIST and c not in [col_map[k] for k in required] and c not in ("XKey","XLabel"):
         metricas.append(c)
 
-# inclusões forçadas respeitando a ordem do Excel
 forced_labels = [
     "LapTime - Info",
     "Tire - Info",
@@ -319,7 +298,6 @@ forced_labels = [
     "G_Comb -Avg",
     "25_AcLat_Trigger -Avg",
     "25_AcLong_Trigger_Positivo -Avg",
-    # extras usados em hover/conversões
     "SessionComment - Info",
 ]
 for lbl in forced_labels:
@@ -328,7 +306,6 @@ for lbl in forced_labels:
         metricas = _insert_by_excel_order(df, metricas, real)
 metricas = _unique_preserve(metricas)
 
-# Dispersão (todas as colunas que façam sentido), também em ordem do Excel
 metricas_all = []
 for c in df.columns:
     if c not in METRIC_BLACKLIST:
@@ -392,7 +369,6 @@ def parse_laptime_to_seconds(x) -> float:
         return float(m.group(0)) if m else np.nan
 
 def materialize_metric_series(dfin: pd.DataFrame, y_col: str):
-    # Resolve a coluna no df, mesmo se o literal não existir
     real = y_col if y_col in dfin.columns else find_metric(dfin, y_col)
     col = real or y_col
     y_norm = _normalize(col)
@@ -417,11 +393,9 @@ def materialize_metric_series(dfin: pd.DataFrame, y_col: str):
         mapping = {cat: i+1 for i, cat in enumerate(cats.categories)}
         return codes.astype(float), "Tire - Info", {"category_text": text, "category_map": mapping}
 
-    # default numérico
     if col in dfin.columns and pd.api.types.is_numeric_dtype(dfin[col]):
         return pd.to_numeric(dfin[col], errors='coerce'), y_col, {}
 
-    # fallback categórico universal (texto -> códigos 1..K)
     if col in dfin.columns and not pd.api.types.is_numeric_dtype(dfin[col]):
         text = dfin[col].astype(str)
         cats = pd.Categorical(text)
@@ -429,7 +403,6 @@ def materialize_metric_series(dfin: pd.DataFrame, y_col: str):
         mapping = {cat: i+1 for i, cat in enumerate(cats.categories)}
         return codes.astype(float), y_col, {"category_text": text, "category_map": mapping}
 
-    # se ainda não existir, devolve NaN p/ não quebrar
     return pd.Series([np.nan]*len(dfin), index=dfin.index), y_col, {}
 
 legend_right = dict(orientation='v', yanchor='top', y=1, xanchor='left', x=1.02,
@@ -446,9 +419,8 @@ def hover_template_for(metric_title: str, has_comment: bool, has_category: bool)
     idx = 4
     if has_comment:
         parts.append(f"<br><b>SessionComment - Info</b>: %{{customdata[{idx}]}}")
-        idx += 1
     if has_category:
-        parts.append(f"<br><b>Tire - Info</b>: %{{customdata[{idx}]}}")
+        parts.append(f"<br><b>Tire - Info</b>: %{{customdata[{idx + (1 if has_comment else 0)}]}}")
     return "".join(parts) + "<extra></extra>"
 
 def draw_line(df_plot, y_col, color_col, legend_title):
@@ -462,25 +434,23 @@ def draw_line(df_plot, y_col, color_col, legend_title):
     tickvals, ticktext = sample_ticks(x_vals, x_texts, max_ticks=30)
 
     custom_cols = [lap_col, sessionname_col, trackname_col, 'XLabel']
-    has_comment  = "comment_text"  in extra
-    has_category = "category_text" in extra
-    if has_comment:
-        df_plot["__comment__"] = extra["comment_text"]
-        custom_cols.append("__comment__")
-    if has_category:
-        df_plot["__category__"] = extra["category_text"]
-        custom_cols.append("__category__")
+    if "comment_text" in extra:
+        df_plot["__comment__"] = extra["comment_text"]; custom_cols.append("__comment__")
+    if "category_text" in extra:
+        df_plot["__category__"] = extra["category_text"]; custom_cols.append("__category__")
 
     fig = px.line(df_plot, x='XKey', y="__y__", color=color_col, markers=True,
                   title=y_title, custom_data=custom_cols)
 
-    fig.update_traces(hovertemplate=hover_template_for(y_title, has_comment, has_category))
+    fig.update_traces(hovertemplate=hover_template_for(
+        y_title, "comment_text" in extra, "category_text" in extra
+    ))
     fig.update_layout(title_font=dict(size=40, color="white"), height=600,
                       legend=legend_right, legend_title_text=legend_title)
     fig.update_xaxes(type='category', categoryorder='array', categoryarray=list(dict.fromkeys(x_vals)),
                      tickmode='array', tickvals=tickvals, ticktext=ticktext, title=None)
 
-    if has_category and "category_map" in extra:
+    if "category_map" in extra:
         name_to_code = extra["category_map"]
         fig.update_yaxes(tickmode="array",
                          tickvals=list(name_to_code.values()),
@@ -488,13 +458,21 @@ def draw_line(df_plot, y_col, color_col, legend_title):
     return fig, df_plot
 
 # =========================
-# Defaults iniciais (originais)
+# Defaults iniciais (sem escopo global)
 # =========================
-def _reset_initial_defaults():
-    sig = (tuple(sorted(df.columns)), int(df.shape[0]))
+def _reset_initial_defaults(metricas_in, metricas_all_in, df_in: pd.DataFrame):
+    """
+    Define/repõe os defaults respeitando a ordem do Excel e evita UnboundLocalError.
+    Retorna (metricas_out, metricas_all_out).
+    """
+    sig = (tuple(sorted(df_in.columns)), int(df_in.shape[0]))
     if st.session_state.get("_data_sig") == sig:
-        return
+        return metricas_in, metricas_all_in
+
     st.session_state["_data_sig"] = sig
+
+    metricas_out = list(metricas_in)
+    metricas_all_out = list(metricas_all_in)
 
     desired = {
         1: "LapTime - Info",
@@ -507,23 +485,25 @@ def _reset_initial_defaults():
         8: "25_AcLong_Trigger_Positivo -Avg",
     }
     for i, label in desired.items():
-        real = find_metric(df, label) or label
-        if real not in metricas and real not in METRIC_BLACKLIST:
-            metricas = _insert_by_excel_order(df, metricas, real)
+        real = find_metric(df_in, label) or label
+        if real not in METRIC_BLACKLIST and real not in metricas_out:
+            metricas_out = _insert_by_excel_order(df_in, metricas_out, real)
         st.session_state[f"g{i}::metric"] = real
 
-    # G9 defaults
-    x_default = find_metric(df, "G_Comb -Avg") or "G_Comb -Avg"
-    y_default = find_metric(df, "LapTime - Info") or "LapTime - Info"
-    if x_default not in metricas_all and x_default not in METRIC_BLACKLIST:
-        metricas_all = _insert_by_excel_order(df, metricas_all, x_default)
-    if y_default not in metricas_all and y_default not in METRIC_BLACKLIST:
-        metricas_all = _insert_by_excel_order(df, metricas_all, y_default)
+    x_default = find_metric(df_in, "G_Comb -Avg") or "G_Comb -Avg"
+    y_default = find_metric(df_in, "LapTime - Info") or "LapTime - Info"
+    if x_default not in METRIC_BLACKLIST and x_default not in metricas_all_out:
+        metricas_all_out = _insert_by_excel_order(df_in, metricas_all_out, x_default)
+    if y_default not in METRIC_BLACKLIST and y_default not in metricas_all_out:
+        metricas_all_out = _insert_by_excel_order(df_in, metricas_all_out, y_default)
     st.session_state["disp::x"] = x_default
     st.session_state["disp::y"] = y_default
     st.session_state["disp::trend"] = False
 
-_reset_initial_defaults()
+    return metricas_out, metricas_all_out
+
+# aplica defaults (corrigido)
+metricas, metricas_all = _reset_initial_defaults(metricas, metricas_all, df)
 
 # =========================
 # UI/plots (3×3) — select acima de cada gráfico
@@ -555,11 +535,9 @@ def graph_card(i: int, base_df: pd.DataFrame):
                 cmp_cfg = (dA, mA, sA, dB, mB, sB)
 
     def _apply_filters(dfin, driver=None, mode="Todas", session=None):
-        if dfin is None or dfin.empty:
-            return dfin
+        if dfin is None or dfin.empty: return dfin
         dfout = dfin.copy()
-        if driver:
-            dfout = dfout[dfout[drivername_col].astype(str) == str(driver)]
+        if driver: dfout = dfout[dfout[drivername_col].astype(str) == str(driver)]
         if mode == "Apenas uma" and session:
             dfout = dfout[dfout[sessionname_col].astype(str) == str(session)]
         return dfout
@@ -604,9 +582,6 @@ for row_start in range(0, 9, 3):
                 hover_and_stats(fig_obj, df_used, y_used)
                 plot_counter += 1
         elif slot_idx == 9:
-            # =========================
-            # Dispersão (G9)
-            # =========================
             with cols[j]:
                 st.subheader("Dispersão (G9)")
 
