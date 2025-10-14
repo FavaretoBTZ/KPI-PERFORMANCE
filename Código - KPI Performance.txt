@@ -22,6 +22,8 @@ def _normalize(s: str) -> str:
     s = str(s)
     s = unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("ascii")
     s = s.strip().lower()
+    s = s.replace("%", " percent")
+    s = re.sub(r"[^\w\s]", " ", s)           # troca separadores por espaço
     s = re.sub(r"[_\-/]+"," ", s)
     s = re.sub(r"\s+"," ", s)
     return s
@@ -32,25 +34,38 @@ def _strip_metric_suffixes(n: str) -> str:
         toks.pop()
     return " ".join(toks)
 
+def _strip_leading_numbers(nbase: str) -> str:
+    # remove prefixos tipo "24 " ou "25 " do início
+    return re.sub(r"^\d+\s+", "", nbase).strip()
+
 def _norm_map(df: pd.DataFrame):
+    """
+    Cria um mapa robusto:
+      - chave: normalizado completo
+      - chave: base (sem sufixo)
+      - chave: base sem prefixos numericos ("25 ") também
+    """
     m = {}
     for c in df.columns:
         nfull = _normalize(c)
         nbase = _strip_metric_suffixes(nfull)
-        if nfull not in m: m[nfull] = c
-        if nbase and nbase not in m: m[nbase] = c
+        nbase_wo_num = _strip_leading_numbers(nbase)
+
+        for key in filter(None, [nfull, nbase, nbase_wo_num]):
+            if key not in m:
+                m[key] = c
     return m
 
 def resolve_columns(df: pd.DataFrame, req):
     m = _norm_map(df); keys_av = list(m.keys())
     aliases = {
         "caralias":["caralias","car alias","car","carro","vehicle","car id","car number","carno","n carro"],
-        "sessiondate":["sessiondate","session date","date","data","session day","dia","data sessao","timestamp","time"],
-        "run":["run","stint","stint id","stint no","stint number","corrida","bateria"],
+        "sessiondate":["sessiondate","session date","date","data","session day","dia","data sessao","timestamp","time","data e hora"],
+        "run":["run","stint","stint id","stint no","stint number","corrida","bateria","run number"],
         "trackname":["trackname","track name","track","circuit","circuito","etapa"],
         "drivername":["drivername","driver","piloto","nome piloto","driver name"],
-        "sessionname":["sessionname","session","nome sessao","tipo sessao","session type","practice","qualifying","race"],
-        "lap":["lap","lapnumber","lap number","lap no","n volta","volta","lapcount","lap idx"],
+        "sessionname":["sessionname","session","nome sessao","tipo sessao","session type","practice","qualifying","race","warmup"],
+        "lap":["lap","lapnumber","lap number","lap no","n volta","volta","lapcount","lap idx","lap index"],
     }
     out = {}
     for key in req:
@@ -62,10 +77,10 @@ def resolve_columns(df: pd.DataFrame, req):
             for c in cands:
                 hits = [k for k in keys_av if k.startswith(c+" ")]
                 if hits: found = m[hits[0]]; break
-            if not found:
-                for c in cands:
-                    hits = [k for k in keys_av if f" {c} " in f" {k} "]
-                    if hits: found = m[hits[0]]; break
+        if not found:
+            for c in cands:
+                hits = [k for k in keys_av if f" {c} " in f" {k} "]
+                if hits: found = m[hits[0]]; break
         if not found:
             for c in cands:
                 hits = get_close_matches(c, keys_av, n=1, cutoff=0.7)
@@ -73,8 +88,113 @@ def resolve_columns(df: pd.DataFrame, req):
         if found: out[key] = found
     return out
 
-def _find_col_exact(df: pd.DataFrame, label: str):
-    return _norm_map(df).get(_normalize(label))
+# ===== Novo: resolução de métricas por base + sufixo =====
+# mapeia os sufixos aceitos para um "alvo" padrão
+_SUFFIX_EQUIV = {
+    "info": ["info"],
+    "min": ["min"],
+    "max": ["max"],
+    "avg": ["avg","mean","median"],
+    "std": ["std"],
+    "ref": ["ref","reference","target"],  # inclui 'target' aqui para fallback
+    "target": ["target","ref","reference"],  # e vice-versa
+}
+
+def _split_target_label(label: str):
+    """
+    Quebra "25_AcLat_Trigger -Avg" em (base_normalizada_sem_numero, sufixo_normalizado)
+    """
+    n = _normalize(label)
+    # tenta separar por sufixos conhecidos no final
+    toks = n.split()
+    suf = None
+    if toks and toks[-1] in _SUFFIXES_TO_STRIP:
+        suf = toks[-1]
+        base = " ".join(toks[:-1])
+    else:
+        # fallback: procura padrao ' - Sufixo'
+        m = re.search(r"(.*?)[\s\-_/]+(info|min|max|avg|mean|median|std|ref|target)$", n)
+        if m:
+            base, suf = m.group(1), m.group(2)
+        else:
+            base, suf = n, None
+    base_wo_num = _strip_leading_numbers(_strip_metric_suffixes(base))
+    return base_wo_num.strip(), (suf or "").strip()
+
+def _suffix_candidates(suf: str):
+    suf = (suf or "").strip().lower()
+    if suf in _SUFFIX_EQUIV:
+        return _SUFFIX_EQUIV[suf] + [suf]
+    # default: tente todos
+    return list(_SUFFIX_EQUIV.keys())
+
+def find_metric(df: pd.DataFrame, target_label: str):
+    """
+    Encontra a coluna real no df equivalente ao target_label,
+    independente da ordem e pequenas variações de formatação.
+    Estratégia: exato -> por base (sem número) + sufixo -> fuzzy -> primeiro que bata a base.
+    """
+    cols = list(df.columns)
+    norm_to_orig = _norm_map(df)
+
+    # 1) match exato via normalização total
+    n_exact = _normalize(target_label)
+    if n_exact in norm_to_orig:
+        return norm_to_orig[n_exact]
+
+    # 2) base + sufixo
+    base_need, suf_need = _split_target_label(target_label)
+    suf_opts = _suffix_candidates(suf_need)
+
+    # constrói índice por (base_sem_num, sufixo)
+    bucket = {}  # base -> {sufixo : [originals]}
+    for c in cols:
+        nfull = _normalize(c)
+        nbase = _strip_metric_suffixes(nfull)
+        nbase_wo_num = _strip_leading_numbers(nbase)
+        # sufixo: ultima palavra se estiver nos sufixos conhecidos
+        toks = nfull.split()
+        csuf = toks[-1] if toks and toks[-1] in _SUFFIXES_TO_STRIP else ""
+        bucket.setdefault(nbase_wo_num, {}).setdefault(csuf, []).append(c)
+
+    # 2a) base igual + sufixo desejado
+    if base_need in bucket:
+        for s in suf_opts:
+            if s in bucket[base_need]:
+                return bucket[base_need][s][0]
+
+        # 2b) base igual + qualquer sufixo
+        # preferência por avg/max/min/info nessa ordem
+        for pref in ["avg","max","min","info","mean","median","std","ref","target",""]:
+            if pref in bucket[base_need]:
+                return bucket[base_need][pref][0]
+        # se existir algum sufixo qualquer
+        for _, lst in bucket[base_need].items():
+            if lst: return lst[0]
+
+    # 3) fuzzy na base
+    bases_av = list(bucket.keys())
+    hits = get_close_matches(base_need, bases_av, n=1, cutoff=0.8)
+    if hits:
+        b = hits[0]
+        for s in suf_opts:
+            if s in bucket[b]:
+                return bucket[b][s][0]
+        # qualquer sufixo
+        for _, lst in bucket[b].items():
+            if lst: return lst[0]
+
+    # 4) fallback: procura por substring da base em qualquer coluna
+    for c in cols:
+        if base_need and base_need in _strip_leading_numbers(_strip_metric_suffixes(_normalize(c))):
+            return c
+
+    # 5) último recurso: se o norm_map tiver a base
+    if base_need in norm_to_orig:
+        return norm_to_orig[base_need]
+
+    # nada encontrado
+    return None
 
 # =========================
 # App
@@ -162,10 +282,9 @@ forced_labels = [
     "SessionComment - Info",
 ]
 for lbl in forced_labels:
-    real = _find_col_exact(df, lbl)
-    use_lbl = real or lbl
-    if use_lbl not in metricas and use_lbl not in METRIC_BLACKLIST:
-        metricas.append(use_lbl)
+    real = find_metric(df, lbl) or lbl
+    if real not in metricas and real not in METRIC_BLACKLIST:
+        metricas.append(real)
 
 # =========================
 # Utils (ordenação, ticks)
@@ -208,6 +327,7 @@ def sample_ticks(x_vals, x_texts, max_ticks=30):
 def parse_laptime_to_seconds(x) -> float:
     if pd.isna(x): return np.nan
     s = str(x).strip().replace(",", ".")
+    s = re.sub(r"\s+", "", s)
     if not s or s.lower() in ["nan","none"]: return np.nan
     try:
         if ":" in s:
@@ -219,12 +339,13 @@ def parse_laptime_to_seconds(x) -> float:
         return float(m.group(0)) if m else np.nan
 
 def materialize_metric_series(dfin: pd.DataFrame, y_col: str):
-    # se o literal não existe na planilha, tenta resolver pelo mapa
-    col = y_col if y_col in dfin.columns else _find_col_exact(dfin, y_col) or y_col
+    # Resolve a coluna no df, mesmo se o literal não existir
+    real = y_col if y_col in dfin.columns else find_metric(dfin, y_col)
+    col = real or y_col
     y_norm = _normalize(col)
-    laptime_norm  = _normalize("LapTime - Info")
-    comment_norm  = _normalize("SessionComment - Info")
-    tire_norm     = _normalize("Tire - Info")
+    laptime_norm  = _normalize(find_metric(dfin, "LapTime - Info") or "LapTime - Info")
+    comment_norm  = _normalize(find_metric(dfin, "SessionComment - Info") or "SessionComment - Info")
+    tire_norm     = _normalize(find_metric(dfin, "Tire - Info") or "Tire - Info")
 
     if col in dfin.columns and y_norm == laptime_norm:
         serie = dfin[col].map(parse_laptime_to_seconds)
@@ -246,7 +367,6 @@ def materialize_metric_series(dfin: pd.DataFrame, y_col: str):
     # default
     if col in dfin.columns:
         return pd.to_numeric(dfin[col], errors='coerce'), y_col, {}
-    # se ainda não existir, devolve NaN p/ não quebrar
     return pd.Series([np.nan]*len(dfin), index=dfin.index), y_col, {}
 
 legend_right = dict(orientation='v', yanchor='top', y=1, xanchor='left', x=1.02,
@@ -294,7 +414,7 @@ def draw_line(df_plot, y_col, color_col, legend_title):
     fig.update_traces(hovertemplate=hover_template_for(y_title, has_comment, has_category))
     fig.update_layout(title_font=dict(size=40, color="white"), height=600,
                       legend=legend_right, legend_title_text=legend_title)
-    fig.update_xaxes(type='category', categoryorder='array', categoryarray=x_vals,
+    fig.update_xaxes(type='category', categoryorder='array', categoryarray=list(dict.fromkeys(x_vals)),
                      tickmode='array', tickvals=tickvals, ticktext=ticktext, title=None)
 
     if has_category and "category_map" in extra:
@@ -309,7 +429,7 @@ def draw_line(df_plot, y_col, color_col, legend_title):
 # =========================
 metricas_all = [c for c in df.select_dtypes(include='number').columns if c not in METRIC_BLACKLIST]
 for special in set(forced_labels):
-    use_lbl = _find_col_exact(df, special) or special
+    use_lbl = find_metric(df, special) or special
     if use_lbl not in metricas_all and use_lbl not in METRIC_BLACKLIST:
         metricas_all.append(use_lbl)
 
@@ -333,14 +453,14 @@ def _reset_initial_defaults():
         8: "25_AcLong_Trigger_Positivo -Avg",
     }
     for i, label in desired.items():
-        real = _find_col_exact(df, label) or label
+        real = find_metric(df, label) or label
         if real not in metricas and real not in METRIC_BLACKLIST:
             metricas.append(real)
         st.session_state[f"g{i}::metric"] = real
 
     # G9 defaults
-    x_default = _find_col_exact(df, "G_Comb -Avg") or "G_Comb -Avg"
-    y_default = _find_col_exact(df, "LapTime - Info") or "LapTime - Info"
+    x_default = find_metric(df, "G_Comb -Avg") or "G_Comb -Avg"
+    y_default = find_metric(df, "LapTime - Info") or "LapTime - Info"
     if x_default not in metricas_all and x_default not in METRIC_BLACKLIST:
         metricas_all.append(x_default)
     if y_default not in metricas_all and y_default not in METRIC_BLACKLIST:
@@ -392,7 +512,7 @@ def graph_card(i: int, base_df: pd.DataFrame):
 
     if cmp_cfg is None:
         df_g = base_df.copy()
-        fig, used = draw_line(df_g, y_i, sessionname_col, sessionname_col)
+        fig, used = draw_line(df_g, y_i, sessionname_col, "SessionName")
         return fig, used, y_i
     else:
         dA, mA, sA, dB, mB, sB = cmp_cfg
@@ -411,10 +531,11 @@ def hover_and_stats(fig_obj, df_used, y_used):
     if df_used is not None and y_used is not None:
         ys, _, _ = materialize_metric_series(df_used, y_used)
         vec = pd.to_numeric(ys, errors='coerce')
+        has_vals = np.isfinite(vec).any()
         c1, c2, c3 = st.columns(3)
-        with c1: st.metric("Mínimo", f"{vec.min():.3f}" if vec.notna().any() else "—")
-        with c2: st.metric("Máximo", f"{vec.max():.3f}" if vec.notna().any() else "—")
-        with c3: st.metric("Média",  f"{vec.mean():.3f}" if vec.notna().any() else "—")
+        with c1: st.metric("Mínimo", f"{np.nanmin(vec):.3f}" if has_vals else "—")
+        with c2: st.metric("Máximo", f"{np.nanmax(vec):.3f}" if has_vals else "—")
+        with c3: st.metric("Média",  f"{np.nanmean(vec):.3f}" if has_vals else "—")
 
 plot_counter = 0
 for row_start in range(0, 9, 3):
@@ -430,33 +551,33 @@ for row_start in range(0, 9, 3):
                 plot_counter += 1
         elif slot_idx == 9:
             # =========================
-            # Dispersão (G9) — sem index para evitar warning
+            # Dispersão (G9)
             # =========================
             with cols[j]:
                 st.subheader("Dispersão (G9)")
 
                 if "disp::x" not in st.session_state or st.session_state["disp::x"] not in metricas_all:
-                    st.session_state["disp::x"] = _find_col_exact(df, "G_Comb -Avg") or "G_Comb -Avg"
+                    st.session_state["disp::x"] = find_metric(df, "G_Comb -Avg") or "G_Comb -Avg"
                     if st.session_state["disp::x"] not in metricas_all:
                         metricas_all.append(st.session_state["disp::x"])
 
                 if "disp::y" not in st.session_state or st.session_state["disp::y"] not in metricas_all:
-                    st.session_state["disp::y"] = _find_col_exact(df, "LapTime - Info") or "LapTime - Info"
+                    st.session_state["disp::y"] = find_metric(df, "LapTime - Info") or "LapTime - Info"
                     if st.session_state["disp::y"] not in metricas_all:
                         metricas_all.append(st.session_state["disp::y"])
 
                 if "disp::trend" not in st.session_state:
                     st.session_state["disp::trend"] = False
 
-                x_disp = st.selectbox("Métrica X:", metricas_all, key="disp::x")  # sem index
-                y_disp = st.selectbox("Métrica Y:", metricas_all, key="disp::y")  # sem index
+                x_disp = st.selectbox("Métrica X:", metricas_all, key="disp::x")
+                y_disp = st.selectbox("Métrica Y:", metricas_all, key="disp::y")
                 trend  = st.checkbox("Mostrar linha de tendência", key="disp::trend")
 
-                x_ok = (x_disp in df.columns) or (_find_col_exact(df, x_disp) is not None)
-                y_ok = (y_disp in df.columns) or (_find_col_exact(df, y_disp) is not None)
+                x_ok = (x_disp in df.columns) or (find_metric(df, x_disp) is not None)
+                y_ok = (y_disp in df.columns) or (find_metric(df, y_disp) is not None)
                 if x_ok and y_ok:
-                    x_col = x_disp if x_disp in df.columns else _find_col_exact(df, x_disp)
-                    y_col = y_disp if y_disp in df.columns else _find_col_exact(df, y_disp)
+                    x_col = x_disp if x_disp in df.columns else find_metric(df, x_disp)
+                    y_col = y_disp if y_disp in df.columns else find_metric(df, y_disp)
                     df_disp = df.copy()
                     y_series, y_title, _ = materialize_metric_series(df_disp, y_col)
                     df_disp["__y__"] = y_series
@@ -495,14 +616,8 @@ wanted_labels = [
 ]
 
 def _find_col_exact_local(df_in: pd.DataFrame, label: str):
-    norm = _normalize(label)
-    mapping = { _normalize(c): c for c in df_in.columns }
-    if norm in mapping: return mapping[norm]
-    if "laptime - info" in norm or "laptim - info" in norm:
-        for k in mapping:
-            if "laptime - info" in k or "laptim - info" in k:
-                return mapping[k]
-    return None
+    # agora usa o mesmo motor
+    return find_metric(df_in, label)
 
 col_map_export = { lbl: _find_col_exact_local(df, lbl) for lbl in wanted_labels }
 
@@ -532,7 +647,7 @@ def fastest_per_session(df_in: pd.DataFrame) -> pd.DataFrame:
 
     out_cols = []
     for lbl in wanted_labels:
-        src = col_map_export.get(lbl)
+        src = col_map_export.get(lbl) or _find_col_exact_local(df_in, lbl)
         if src is not None and src in best.columns:
             s = best[src]; s.name = lbl
             out_cols.append(s)
