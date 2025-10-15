@@ -643,10 +643,11 @@ st.header("Planilhas por TrackName - Info (volta mais rápida por sessão)")
 all_tracks = sorted(df[trackname_col].dropna().astype(str).unique().tolist())
 track_sel = st.selectbox("TrackName - Info (planilhas):", all_tracks, index=0, key="export::track")
 
+# >>> rótulos exibidos na tabela (agora com Ac.Lat / Ac.Long)
 wanted_labels = [
     "SessionName - Info", "LapTime - Info", "Tire - Info", "TrackName - Info",
-    "AccX -Min", "AccX -Max", "AccX -Avg",
-    "AccY -Min", "AccY -Max", "AccY -Avg",
+    "Ac.Lat - Min", "Ac.Lat - Max", "Ac.Lat - Avg",
+    "Ac.Long - Min", "Ac.Long - Max", "Ac.Long - Avg",
     "G_Comb -Max", "G_Comb -Avg",
     "25_AcLat_Trigger -Avg",
     "25_AcLong_Trigger_Positivo -Avg",
