@@ -23,7 +23,7 @@ def _normalize(s: str) -> str:
     s = unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("ascii")
     s = s.strip().lower()
     s = s.replace("%", " percent")
-    s = re.sub(r"[^\w\s]", " ", s)
+    s = re.sub(r"[^\w\s]", " ", s)           # pontos, hífens, barras -> espaço
     s = re.sub(r"[_\-/]+"," ", s)
     s = re.sub(r"\s+"," ", s)
     return s
@@ -35,6 +35,7 @@ def _strip_metric_suffixes(n: str) -> str:
     return " ".join(toks)
 
 def _strip_leading_numbers(nbase: str) -> str:
+    # remove prefixos tipo "24 " ou "25 "
     return re.sub(r"^\d+\s+", "", nbase).strip()
 
 def _norm_map(df: pd.DataFrame):
@@ -97,11 +98,19 @@ _SUFFIX_EQUIV = {
     "target": ["target","ref","reference"],
 }
 
-# sinônimos para nomes-base
+# sinônimos para nomes-base (inclui AccX/AccY ↔ Ac.Lat/Ac.Long)
 _BASE_SYNONYMS = {
+    # existentes
     "tire": ["tyre", "pneu", "tires", "tyres"],
     "tyre": ["tire", "pneu", "tires", "tyres"],
     "pneu": ["tire", "tyre", "tires", "tyres"],
+
+    # novos: aceleração lateral/longitudinal
+    "accx":   ["ac lat", "aclat", "acc x", "ac x"],
+    "ac lat": ["accx", "aclat", "acc x", "ac x"],
+
+    "accy":    ["ac long", "aclong", "acc y", "ac y"],
+    "ac long": ["accy", "aclong", "acc y", "ac y"],
 }
 
 def _expand_base_aliases(base: str):
@@ -465,15 +474,18 @@ def _reset_initial_defaults(metricas_in, metricas_all_in, df_in: pd.DataFrame):
     Define/repõe os defaults respeitando a ordem do Excel e evita UnboundLocalError.
     Retorna (metricas_out, metricas_all_out).
     """
+    # Evita refazer se os dados não mudaram
     sig = (tuple(sorted(df_in.columns)), int(df_in.shape[0]))
     if st.session_state.get("_data_sig") == sig:
         return metricas_in, metricas_all_in
 
     st.session_state["_data_sig"] = sig
 
+    # Cópias locais
     metricas_out = list(metricas_in)
     metricas_all_out = list(metricas_all_in)
 
+    # Defaults G1..G8
     desired = {
         1: "LapTime - Info",
         2: "Tire - Info",
@@ -490,6 +502,7 @@ def _reset_initial_defaults(metricas_in, metricas_all_in, df_in: pd.DataFrame):
             metricas_out = _insert_by_excel_order(df_in, metricas_out, real)
         st.session_state[f"g{i}::metric"] = real
 
+    # Dispersão (G9)
     x_default = find_metric(df_in, "G_Comb -Avg") or "G_Comb -Avg"
     y_default = find_metric(df_in, "LapTime - Info") or "LapTime - Info"
     if x_default not in METRIC_BLACKLIST and x_default not in metricas_all_out:
@@ -502,7 +515,7 @@ def _reset_initial_defaults(metricas_in, metricas_all_in, df_in: pd.DataFrame):
 
     return metricas_out, metricas_all_out
 
-# aplica defaults (corrigido)
+# aplica defaults
 metricas, metricas_all = _reset_initial_defaults(metricas, metricas_all, df)
 
 # =========================
@@ -630,10 +643,11 @@ st.header("Planilhas por TrackName - Info (volta mais rápida por sessão)")
 all_tracks = sorted(df[trackname_col].dropna().astype(str).unique().tolist())
 track_sel = st.selectbox("TrackName - Info (planilhas):", all_tracks, index=0, key="export::track")
 
+# >>> rótulos exibidos na tabela (agora com Ac.Lat / Ac.Long)
 wanted_labels = [
     "SessionName - Info", "LapTime - Info", "Tire - Info", "TrackName - Info",
-    "AccX -Min", "AccX -Max", "AccX -Avg",
-    "AccY -Min", "AccY -Max", "AccY -Avg",
+    "Ac.Lat - Min", "Ac.Lat - Max", "Ac.Lat - Avg",
+    "Ac.Long - Min", "Ac.Long - Max", "Ac.Long - Avg",
     "G_Comb -Max", "G_Comb -Avg",
     "25_AcLat_Trigger -Avg",
     "25_AcLong_Trigger_Positivo -Avg",
