@@ -14,6 +14,11 @@ METRIC_BLACKLIST = {
 }
 
 # =========================
+# Regex global (precisa estar antes do _is_numericish)
+# =========================
+_num_pat = re.compile(r"[-+]?\d*[\.,]?\d+")
+
+# =========================
 # Normalização de nomes
 # =========================
 _SUFFIXES_TO_STRIP = ["info","min","max","avg","mean","median","std","ref","target"]
@@ -261,6 +266,10 @@ base = df[df[col_map['caralias']].astype(str) == str(car_alias)]
 if selected_track != "TODAS":
     base = base[base[trackname_col].astype(str) == str(selected_track)]
 
+if base.empty:
+    st.warning("Nenhum dado após os filtros selecionados.")
+    st.stop()
+
 cols_excluir = [col_map[k] for k in required] + ['XKey', 'XLabel']
 
 # =========================
@@ -289,19 +298,16 @@ def _insert_by_excel_order(df_in: pd.DataFrame, ordered_list, col_to_add):
     return ordered_list
 
 # =========================
-# Métricas (ordem do Excel)
+# Métricas (ordem do Excel) — OPÇÃO A (numeric-ish)
 # =========================
-# ======================================================
-# Detecta colunas numéricas OU "numeric-ish" (texto com números)
-# ======================================================
 def _is_numericish(series: pd.Series, thresh=0.5):
+    """Detecta colunas numéricas OU texto que contém números (>= thresh de valores válidos)."""
     if pd.api.types.is_numeric_dtype(series):
         return True
-    # tenta extrair número mesmo se tiver texto, vírgula etc.
     s = series.astype(str).str.replace(",", ".", regex=False)
     vals = s.map(lambda x: (_num_pat.search(x) or [None])[0])
     vals = pd.to_numeric(vals, errors="coerce")
-    return np.isfinite(vals).mean() >= thresh  # Ex: se 50%+ são numéricos, considera métrica
+    return np.isfinite(vals).mean() >= thresh
 
 metricas = []
 for c in df.columns:
@@ -314,50 +320,18 @@ for c in df.columns:
     if _is_numericish(df[c]):
         metricas.append(c)
 
-
-forced_labels = [
-    "LapTime - Info",
-    "Tire - Info",
-    "Full_Brake_intg -Max",
-    "24_Brake_Balance -Avg",
-    "Full_throttle_intg -Max",
-    "G_Comb -Avg",
-    "25_AcLat_Trigger -Avg",
-    "25_AcLong_Trigger_Positivo -Avg",
-    "SessionComment - Info",
-]
-for lbl in forced_labels:
-    real = find_metric(df, lbl) or lbl
-    if real not in METRIC_BLACKLIST:
-        metricas = _insert_by_excel_order(df, metricas, real)
-metricas = _unique_preserve(metricas)
-
 metricas_all = []
 for c in df.columns:
     if c not in METRIC_BLACKLIST:
         metricas_all.append(c)
-for special in set(forced_labels):
-    real = find_metric(df, special) or special
-    if real not in METRIC_BLACKLIST:
-        metricas_all = _insert_by_excel_order(df, metricas_all, real)
-metricas_all = _unique_preserve(metricas_all)
 
 # =========================
 # Utils (ordenação, ticks)
 # =========================
-_num_pat = re.compile(r"[-+]?\d*[\.,]?\d+")
-
-def _extract_num_series(series: pd.Series) -> pd.Series:
-    def _one(x):
-        m = _num_pat.search(str(x))
-        if not m: return np.nan
-        return float(m.group(0).replace(",", "."))
-    return series.map(_one)
-
 def _order(dfin: pd.DataFrame) -> pd.DataFrame:
     sdate_ord = pd.to_datetime(dfin[sessiondate_col], errors='coerce')
-    run_ord   = _extract_num_series(dfin[run_col])
-    lap_ord   = _extract_num_series(dfin[lap_col])
+    run_ord   = pd.to_numeric(dfin[run_col].astype(str).str.extract(_num_pat, expand=False).str.replace(",", ".", regex=False), errors='coerce')
+    lap_ord   = pd.to_numeric(dfin[lap_col].astype(str).str.extract(_num_pat, expand=False).str.replace(",", ".", regex=False), errors='coerce')
     sess_ord  = dfin[sessionname_col].astype(str)
     track_ord = dfin[trackname_col].astype(str)
     idx_orig  = np.arange(len(dfin))
@@ -382,17 +356,22 @@ def sample_ticks(x_vals, x_texts, max_ticks=30):
 # =========================
 def parse_laptime_to_seconds(x) -> float:
     if pd.isna(x): return np.nan
-    s = str(x).strip().replace(",", ".")
+    s = str(x).strip().lower().replace(",", ".")
     s = re.sub(r"\s+", "", s)
-    if not s or s.lower() in ["nan","none"]: return np.nan
-    try:
-        if ":" in s:
+    if not s or s in {"nan","none"}: return np.nan
+    m = re.match(r"(?:(\d+)\s*[m'’])?\s*(\d+(?:\.\d+)?)\s*(?:s|\"|”)?$", s)
+    if m:
+        mm = float(m.group(1) or 0.0)
+        ss = float(m.group(2))
+        return 60.0*mm + ss
+    if ":" in s:
+        try:
             mm, ss = s.split(":", 1)
             return float(mm)*60.0 + float(ss)
-        return float(s)
-    except Exception:
-        m = re.search(r"[-+]?\d*\.?\d+", s)
-        return float(m.group(0)) if m else np.nan
+        except Exception:
+            pass
+    m = re.search(r"[-+]?\d*\.?\d+", s)
+    return float(m.group(0)) if m else np.nan
 
 def materialize_metric_series(dfin: pd.DataFrame, y_col: str):
     real = y_col if y_col in dfin.columns else find_metric(dfin, y_col)
@@ -422,7 +401,16 @@ def materialize_metric_series(dfin: pd.DataFrame, y_col: str):
     if col in dfin.columns and pd.api.types.is_numeric_dtype(dfin[col]):
         return pd.to_numeric(dfin[col], errors='coerce'), y_col, {}
 
+    # tentativa de converter "texto numérico"
     if col in dfin.columns and not pd.api.types.is_numeric_dtype(dfin[col]):
+        s = dfin[col].astype(str).str.replace(",", ".", regex=False)
+        s = s.map(lambda x: (_num_pat.search(x) or [None])[0])
+        ser = pd.to_numeric(s, errors="coerce")
+        if ser.notna().any():
+            return ser, y_col, {}
+
+    # categórico genérico
+    if col in dfin.columns:
         text = dfin[col].astype(str)
         cats = pd.Categorical(text)
         codes = pd.Series(cats.codes, index=dfin.index).replace(-1, np.nan) + 1
@@ -593,11 +581,13 @@ def hover_and_stats(fig_obj, df_used, y_used):
     if df_used is not None and y_used is not None:
         ys, _, _ = materialize_metric_series(df_used, y_used)
         vec = pd.to_numeric(ys, errors='coerce')
-        has_vals = np.isfinite(vec).any()
+        finite = np.isfinite(vec)
+        has_vals = bool(finite.any())
+        v = vec[finite] if has_vals else None
         c1, c2, c3 = st.columns(3)
-        with c1: st.metric("Mínimo", f"{np.nanmin(vec):.3f}" if has_vals else "—")
-        with c2: st.metric("Máximo", f"{np.nanmax(vec):.3f}" if has_vals else "—")
-        with c3: st.metric("Média",  f"{np.nanmean(vec):.3f}" if has_vals else "—")
+        with c1: st.metric("Mínimo", f"{v.min():.3f}" if has_vals else "—")
+        with c2: st.metric("Máximo", f"{v.max():.3f}" if has_vals else "—")
+        with c3: st.metric("Média",  f"{v.mean():.3f}" if has_vals else "—")
 
 plot_counter = 0
 for row_start in range(0, 9, 3):
@@ -643,7 +633,6 @@ for row_start in range(0, 9, 3):
                     fig_disp = px.scatter(
                         df_disp, x=x_col, y="__y__",
                         color=sessionname_col if sessionname_col in df.columns else None,
-                        trendline="ols" if trend else None,
                         title=f"{x_disp} vs {y_title}"
                     )
                     fig_disp.update_layout(title_font=dict(size=40, color="white"), height=600, legend=legend_right)
