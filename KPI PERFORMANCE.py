@@ -291,12 +291,29 @@ def _insert_by_excel_order(df_in: pd.DataFrame, ordered_list, col_to_add):
 # =========================
 # Métricas (ordem do Excel)
 # =========================
-_numeric_set = set(df.select_dtypes(include='number').columns)
+# ======================================================
+# Detecta colunas numéricas OU "numeric-ish" (texto com números)
+# ======================================================
+def _is_numericish(series: pd.Series, thresh=0.5):
+    if pd.api.types.is_numeric_dtype(series):
+        return True
+    # tenta extrair número mesmo se tiver texto, vírgula etc.
+    s = series.astype(str).str.replace(",", ".", regex=False)
+    vals = s.map(lambda x: (_num_pat.search(x) or [None])[0])
+    vals = pd.to_numeric(vals, errors="coerce")
+    return np.isfinite(vals).mean() >= thresh  # Ex: se 50%+ são numéricos, considera métrica
 
 metricas = []
 for c in df.columns:
-    if c in _numeric_set and c not in METRIC_BLACKLIST and c not in [col_map[k] for k in required] and c not in ("XKey","XLabel"):
+    if c in METRIC_BLACKLIST: 
+        continue
+    if c in [col_map[k] for k in required]: 
+        continue
+    if c in ("XKey","XLabel"):
+        continue
+    if _is_numericish(df[c]):
         metricas.append(c)
+
 
 forced_labels = [
     "LapTime - Info",
