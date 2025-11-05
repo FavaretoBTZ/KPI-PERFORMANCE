@@ -14,7 +14,7 @@ METRIC_BLACKLIST = {
 }
 
 # =========================
-# Regex global (precisa estar antes do _is_numericish)
+# Regex global (precisa estar antes de funções que usam)
 # =========================
 _num_pat = re.compile(r"[-+]?\d*[\.,]?\d+")
 
@@ -104,13 +104,14 @@ _SUFFIX_EQUIV = {
 }
 
 # sinônimos para nomes-base (inclui AccX/AccY ↔ Ac.Lat/Ac.Long)
+# OBS: não junta "25_AcLat_Trigger" com "Ac.Lat" — são bases distintas
 _BASE_SYNONYMS = {
     # existentes
     "tire": ["tyre", "pneu", "tires", "tyres"],
     "tyre": ["tire", "pneu", "tires", "tyres"],
     "pneu": ["tire", "tyre", "tires", "tyres"],
 
-    # novos: aceleração lateral/longitudinal
+    # aceleração lateral/longitudinal (mantém bases "ac lat" e "ac long")
     "accx":   ["ac lat", "aclat", "acc x", "ac x"],
     "ac lat": ["accx", "aclat", "acc x", "ac x"],
 
@@ -326,12 +327,18 @@ for c in df.columns:
         metricas_all.append(c)
 
 # =========================
-# Utils (ordenação, ticks)
+# Utils (ordenação, ticks) — FIX p/ regex com capture group
 # =========================
+def _numeric_from_any(series: pd.Series) -> pd.Series:
+    z = series.astype(str).str.replace(",", ".", regex=False)
+    # regex COM grupo de captura
+    m = z.str.extract(r"([-+]?\d*\.?\d+)", expand=False)
+    return pd.to_numeric(m, errors='coerce')
+
 def _order(dfin: pd.DataFrame) -> pd.DataFrame:
     sdate_ord = pd.to_datetime(dfin[sessiondate_col], errors='coerce')
-    run_ord   = pd.to_numeric(dfin[run_col].astype(str).str.extract(_num_pat, expand=False).str.replace(",", ".", regex=False), errors='coerce')
-    lap_ord   = pd.to_numeric(dfin[lap_col].astype(str).str.extract(_num_pat, expand=False).str.replace(",", ".", regex=False), errors='coerce')
+    run_ord   = _numeric_from_any(dfin[run_col])
+    lap_ord   = _numeric_from_any(dfin[lap_col])
     sess_ord  = dfin[sessionname_col].astype(str)
     track_ord = dfin[trackname_col].astype(str)
     idx_orig  = np.arange(len(dfin))
@@ -649,7 +656,7 @@ st.header("Planilhas por TrackName - Info (volta mais rápida por sessão)")
 all_tracks = sorted(df[trackname_col].dropna().astype(str).unique().tolist())
 track_sel = st.selectbox("TrackName - Info (planilhas):", all_tracks, index=0, key="export::track")
 
-# >>> rótulos exibidos na tabela (agora com Ac.Lat / Ac.Long)
+# Rótulos exibidos na tabela (mantidos, incluindo Ac.Lat e 25_AcLat_Trigger)
 wanted_labels = [
     "SessionName - Info", "LapTime - Info", "Tire - Info", "TrackName - Info",
     "Ac.Lat - Min", "Ac.Lat - Max", "Ac.Lat - Avg",
