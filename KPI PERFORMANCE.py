@@ -634,7 +634,8 @@ for row_start in range(0, 9, 3):
 
         if help_text:
             st.caption(help_text)
-                plot_counter += 1
+
+        plot_counter += 1
         elif slot_idx == 9:
             with cols[j]:
                 st.subheader("Dispersão (G9)")
