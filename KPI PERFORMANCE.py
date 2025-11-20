@@ -605,7 +605,10 @@ def graph_card(i: int, base_df: pd.DataFrame):
         help_text = get_metric_help(y_i)
         return fig, used, y_i, help_text
 
-def hover_and_stats(fig_obj, df_used, y_used):
+def hover_and_stats(fig_obj, df_used, y_used)
+
+        if help_text:
+            st.caption(help_text):
     if df_used is not None and y_used is not None:
         ys, _, _ = materialize_metric_series(df_used, y_used)
         vec = pd.to_numeric(ys, errors='coerce')
@@ -624,10 +627,13 @@ for row_start in range(0, 9, 3):
         slot_idx = row_start + j + 1  # 1..9
         if slot_idx <= 8:
             with cols[j]:
-                fig_obj, df_used, y_used = graph_card(slot_idx, base)
+                fig_obj, df_used, y_used, help_text = graph_card(slot_idx, base)
                 st.plotly_chart(fig_obj, use_container_width=True,
                                 key=f"plot_{slot_idx}_{row_start}_{j}_{plot_counter}")
                 hover_and_stats(fig_obj, df_used, y_used)
+
+        if help_text:
+            st.caption(help_text)
                 plot_counter += 1
         elif slot_idx == 9:
             with cols[j]:
