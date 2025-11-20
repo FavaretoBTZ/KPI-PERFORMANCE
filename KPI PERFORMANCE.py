@@ -13,6 +13,9 @@ METRIC_BLACKLIST = {
     "ELB_TotalKm - Info",
 }
 
+# Dicionário global de legendas (preenchido depois da leitura do Excel)
+METRIC_HELP = {}
+
 # =========================
 # Regex global (precisa estar antes de funções que usam)
 # =========================
@@ -60,6 +63,50 @@ def _norm_map(df: pd.DataFrame):
                 m[key] = c
     return m
 
+# =========================
+# Legendas vindas da linha 3 do Excel
+# =========================
+def build_metric_help(header_row: pd.Series, legend_row: pd.Series) -> dict:
+    """
+    Recebe:
+      - header_row: linha 1 da planilha (nomes dos canais)
+      - legend_row: linha 3 da planilha (texto da legenda)
+    Retorna dict {nome_da_coluna: texto_legenda} apenas para colunas
+    cuja célula da linha 3 NÃO está em branco.
+    """
+    help_map = {}
+    for col_name, legend_cell in zip(header_row, legend_row):
+        if pd.isna(col_name):
+            continue
+        col_name_str = str(col_name).strip()
+        if not col_name_str:
+            continue
+        # Só gera legenda se a célula da linha 3 tiver texto
+        if isinstance(legend_cell, str) and legend_cell.strip():
+            help_map[col_name_str] = legend_cell.strip()
+    return help_map
+
+def get_metric_help(metric_name: str) -> str:
+    """
+    Retorna a legenda para a métrica escolhida (se houver).
+    Se a célula estiver em branco na linha 3, não retorna nada.
+    """
+    if not metric_name:
+        return ""
+    # 1) chave exata
+    if metric_name in METRIC_HELP:
+        return METRIC_HELP[metric_name]
+    # 2) tentativa por nome normalizado (caso venham com variações)
+    n = _normalize(metric_name)
+    for k, txt in METRIC_HELP.items():
+        if _normalize(k) == n:
+            return txt
+    # 3) sem legenda configurada
+    return ""
+
+# =========================
+# Resolver colunas obrigatórias
+# =========================
 def resolve_columns(df: pd.DataFrame, req):
     m = _norm_map(df); keys_av = list(m.keys())
     aliases = {
@@ -104,7 +151,6 @@ _SUFFIX_EQUIV = {
 }
 
 # sinônimos para nomes-base (inclui AccX/AccY ↔ Ac.Lat/Ac.Long)
-# OBS: não junta "25_AcLat_Trigger" com "Ac.Lat" — são bases distintas
 _BASE_SYNONYMS = {
     # existentes
     "tire": ["tyre", "pneu", "tires", "tyres"],
@@ -212,11 +258,32 @@ if not uploaded_file:
     st.info("Envie uma planilha .xlsx para iniciar a análise.")
     st.stop()
 
-# Leitura
-df = pd.read_excel(uploaded_file, header=0)
+# =========================
+# Leitura da planilha com linha 1 (header) e linha 3 (legenda)
+# =========================
+# Lemos SEM header para conseguir acessar as linhas brutas
+df_raw = pd.read_excel(uploaded_file, header=None)
+
+# Linha 0 = nomes dos canais
+header_row = df_raw.iloc[0]
+
+# Linha 2 = legendas dos canais (a linha 3 visual da planilha)
+legend_row = df_raw.iloc[2]
+
+# Data real começa na linha 3 (índice 3)
+df = df_raw.iloc[3:].copy()
+df.columns = header_row.astype(str)
+
+# Drop colunas totalmente vazias
 df = df.dropna(axis=1, how='all')
 df.columns = df.columns.map(str)
 
+# Constrói dicionário de legendas baseado nas colunas e na linha 3
+METRIC_HELP = build_metric_help(header_row, legend_row)
+
+# =========================
+# Colunas obrigatórias
+# =========================
 required = ['caralias','sessiondate','run','trackname','drivername','sessionname','lap']
 col_map = resolve_columns(df, required)
 missing = [k for k in required if k not in col_map]
@@ -307,7 +374,7 @@ def _is_numericish(series: pd.Series, thresh=0.5):
         return True
     s = series.astype(str).str.replace(",", ".", regex=False)
     vals = s.map(lambda x: (_num_pat.search(x) or [None])[0])
-    vals = pd.to_numeric(vals, errors="coerce")
+    vals = pd.to_numeric(vals, errors='coerce')
     return np.isfinite(vals).mean() >= thresh
 
 metricas = []
@@ -534,6 +601,7 @@ metricas, metricas_all = _reset_initial_defaults(metricas, metricas_all, df)
 # UI/plots (3×3) — select acima de cada gráfico
 # =========================
 def graph_card(i: int, base_df: pd.DataFrame):
+    # seleção da métrica
     y_i = st.selectbox(
         f"Selecione a métrica (Y Axis) (G{i}):",
         metricas, key=f"g{i}::metric"
@@ -570,7 +638,8 @@ def graph_card(i: int, base_df: pd.DataFrame):
     if cmp_cfg is None:
         df_g = base_df.copy()
         fig, used = draw_line(df_g, y_i, sessionname_col, "SessionName")
-        return fig, used, y_i
+        help_text = get_metric_help(y_i)
+        return fig, used, y_i, help_text
     else:
         dA, mA, sA, dB, mB, sB = cmp_cfg
         df_A = _apply_filters(base_df.copy(), dA, mA, sA) if dA else base_df.iloc[0:0].copy()
@@ -582,7 +651,8 @@ def graph_card(i: int, base_df: pd.DataFrame):
             return d
         df_cmp = pd.concat([add_group(df_A, dA or ""), add_group(df_B, dB or "")], ignore_index=True)
         fig, used = draw_line(df_cmp, y_i, "DriverSessionGroup", "Driver / Session")
-        return fig, used, y_i
+        help_text = get_metric_help(y_i)
+        return fig, used, y_i, help_text
 
 def hover_and_stats(fig_obj, df_used, y_used):
     if df_used is not None and y_used is not None:
@@ -603,10 +673,16 @@ for row_start in range(0, 9, 3):
         slot_idx = row_start + j + 1  # 1..9
         if slot_idx <= 8:
             with cols[j]:
-                fig_obj, df_used, y_used = graph_card(slot_idx, base)
+                fig_obj, df_used, y_used, help_text = graph_card(slot_idx, base)
                 st.plotly_chart(fig_obj, use_container_width=True,
                                 key=f"plot_{slot_idx}_{row_start}_{j}_{plot_counter}")
                 hover_and_stats(fig_obj, df_used, y_used)
+
+                # Legenda dinâmica abaixo do gráfico (só se linha 3 tiver texto)
+                if help_text:
+                    # pode trocar caption por info se quiser mais destaque
+                    st.caption(help_text)
+
                 plot_counter += 1
         elif slot_idx == 9:
             with cols[j]:
@@ -656,7 +732,7 @@ st.header("Planilhas por TrackName - Info (volta mais rápida por sessão)")
 all_tracks = sorted(df[trackname_col].dropna().astype(str).unique().tolist())
 track_sel = st.selectbox("TrackName - Info (planilhas):", all_tracks, index=0, key="export::track")
 
-# Rótulos exibidos na tabela (mantidos, incluindo Ac.Lat e 25_AcLat_Trigger)
+# Rótulos exibidos na tabela (mantidos)
 wanted_labels = [
     "SessionName - Info", "LapTime - Info", "Tire - Info", "TrackName - Info",
     "Ac.Lat - Min", "Ac.Lat - Max", "Ac.Lat - Avg",
