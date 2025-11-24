@@ -426,8 +426,16 @@ def materialize_metric_series(dfin: pd.DataFrame, y_col: str):
 
     return pd.Series([np.nan]*len(dfin), index=dfin.index), y_col, {}
 
-legend_right = dict(orientation='v', yanchor='top', y=1, xanchor='left', x=1.02,
-                    bgcolor='rgba(0,0,0,0.3)', font=dict(size=13), title_text=None)
+legend_right = dict(
+    orientation='v',
+    yanchor='top',
+    y=1,
+    xanchor='left',
+    x=1.02,
+    bgcolor='rgba(0,0,0,0.3)',
+    font=dict(size=13),
+    title_text=None,
+)
 
 def hover_template_for(metric_title: str, has_comment: bool, has_category: bool) -> str:
     parts = [
@@ -445,7 +453,7 @@ def hover_template_for(metric_title: str, has_comment: bool, has_category: bool)
     return "".join(parts) + "<extra></extra>"
 
 # =========================
-# LEGENDAS FIXAS WINTAX
+# LEGENDAS FIXAS (WINTAX DATA BASE - KPI PERFORMANCE2)
 # =========================
 LEGEND_LABELS = {
     "Brake_Efficiency - Max": "- Quanto MAIOR melhor",
@@ -462,55 +470,48 @@ LEGEND_LABELS = {
     "24_Rear_Wheel_Speeds_Difference - Min": "- Minima diferença entre as rodas traseiras durante a volta",
     "24_Rear_Wheel_Speeds_Difference - Max": "- Máxima diferença entre as rodas traseiras durante a volta",
     "24_Rear_Wheel_Speeds_Difference - Avg": "- Média de diferença entre as rodas traseiras durante a volta",
-    "24_Expected_Rear_Wheel_Speeds_Difference - Min": "-  Minima difereça entre as velocidades de rodas traseiras esperada durante a volta",
-    "24_Expected_Rear_Wheel_Speeds_Difference - Max": "-  Máxima difereça entre as velocidades de rodas traseiras esperada durante a volta",
-    "24_Expected_Rear_Wheel_Speeds_Difference - Avg": "-  Média de difereça entre as velocidades de rodas traseiras esperada durante a volta",
-    "24_Differential_Delta_Real_Expec - Min": "- Minima diferença entre as velocidade das rodas traseiras esperadas e a real, quanto MENOR mais perto do ideal entre o esperado e o real",
-    "24_Differential_Delta_Real_Expec - Max": "- Máxima diferença entre as velocidade das rodas traseiras esperadas e a real, quanto MENOR mais perto do ideal entre o esperado e o real",
-    "24_Differential_Delta_Real_Expec - Avg": "- Média de diferença entre as velocidade das rodas traseiras esperadas e a real, quanto MENOR mais perto do ideal entre o esperado e o real",
-    "25_Brake_Migration - Max": "- Quando MAIOR, mais MIGRAÇÃO do freio durante as frenagens, na volta",
-    "25_SR_Traction_Left - Max": "- Quanto MAIOR, mais a RL esta DESTRACIONANDO em saída de curva na volta",
-    "25_SR_Traction_Left - Avg": "- Quanto MAIOR, mais a RL esta DESTRACIONANDO em saída de curva na volta",
-    "25_SR_Traction_Right - Max": "- Quanto MAIOR, mais a RR esta DESTRACIONANDO em saída de curva na volta",
-    "25_SR_Traction_Right - Avg": "- Quanto MAIOR, mais a RR esta DESTRACIONANDO em saída de curva na volta",
-    "25_Brake_Locking_Time_Rear - Max": "- Quanto MAIOR mais tempo as tempo as rodas traseiras passaram BLOQUEANDO na volta",
-    "25_SR_Traction_Time - Max": "- Quanto MAIOR mais tempo as tempo as rodas traseiras passaram DESTRACIONANDO na volta",
-    "25_Brake_Locking_Time_Front - Max": "- Quanto MAIOR, mais tempo as rodas DIANTEIRAS passaram BLOQUEANDO na volta",
-    "25_Differential_Locking - Min": "- Porcentagem MINIMA de BLOQUEIO DE DIFERENCIAL DURANTE COASTING, na volta",
-    "25_Differential_Locking - Max": "- Porcentagem MÁXIMA de BLOQUEIO DE DIFERENCIAL DURANTE COASTING, na volta",
-    "25_Differential_Locking - Avg": "- MÉDIA de porcentagem de BLOQUEIO DE DIFERENCIAL DURANTE COASTING, na volta",
-    "25_Lateral_Load_Transfer_Front - Max": "- MÁXIMA transferencia lateral de carga na FRENTE pela suspensão em curva na volta",
-    "25_Lateral_Load_Transfer_Front - Avg": "- MÉDIA de transferencia lateral de carga na FRENTE pela suspensão em curva na volta",
-    "25_Lateral_Load_Transfer_Front_Left - Max": "- MÁXIMA transferencia lateral de carga DA DIANTEIRA EM CURVAS PARA ESQUERDA pela suspensão em curva na volta",
-    "25_Lateral_Load_Transfer_Front_Left - Avg": "- MÉDIA de transferencia lateral de carga  DA DIANTEIRA EM CURVAS PARA ESQUERDA pela suspensão em curva na volta",
-    "25_Lateral_Load_Transfer_Front_Right - Max": "- MÁXIMA transferencia lateral de carga DA DIANTEIRA EM CURVAS PARA DIREITA pela suspensão em curva na volta",
-    "25_Lateral_Load_Transfer_Front_Right - Avg": "- MÉDIA de transferencia lateral de carga DA DIANTEIRA EM CURVAS PARA DIREITA pela suspensão em curva na volta",
-    "25_Lateral_Load_Transfer_Rear - Max": "- MÁXIMA transferencia lateral de carga na TRASEIRA pela suspensão em curva na volta",
-    "25_Lateral_Load_Transfer_Rear - Avg": "- MÉDIA de transferencia lateral de carga na TRASEIRA pela suspensão em curva na volta",
-    "25_Lateral_Load_Transfer_Rear_Left - Max": "- MÁXIMA transferencia lateral de carga NA TRASEIRA EM CURVAS PARA ESQUERDA pela suspensão em curva na volta",
-    "25_Lateral_Load_Transfer_Rear_Left - Avg": "- MÉDIA de transferencia lateral de carga NA TRASEIRA EM CURVAS PARA ESQUERDA pela suspensão em curva na volta",
-    "25_Lateral_Load_Transfer_Rear_Right - Max": "- MÁXIMA transferencia lateral de carga NA TRASEIRA EM CURVAS PARA DIREITA pela suspensão em curva na volta",
-    "25_Lateral_Load_Transfer_Rear_Right - Avg": "- MÉDIA de transferencia lateral de carga NA TRASEIRA EM CURVAS PARA DIREITA pela suspensão em curva na volta",
-    "25_Lateral_load_Trasfer_Total - Max": "- MÁXIMA  transferancia de carga lateral pela suspensão do CARRO em curva na volta",
-    "25_Lateral_load_Trasfer_Total - Avg": "- MÉDIA de  transferancia de carga lateral pela suspensão do CARRO em curva na volta",
-    "25_Lateral_Load_Transfer_Distribution - Max": "- MÁXIMA DISTRIBUIÇÃO em % em relação a DIANTEIRA de transferencia lateral de carga em curvas na volta do CARRO",
-    "25_Lateral_Load_Transfer_Distribution - Avg": "- MÉDIA de DISTRIBUIÇÃO em % em relação a DIANTEIRA de transferencia lateral de carga em curvas na volta do CARRO",
-    "25_Roll_Car_Grap - Min": "- MINIMA ROLAGEM do CARRO durante a volta toda",
-    "25_Roll_Car_Grap - Max": "- MÁXIMA ROLAGEM do CARRO durante a volta toda",
-    "25_Roll_Car_Grap - Avg": "- MÉDIA de ROLAGEM do CARRO durante a volta toda",
-    "25_Roll_Front_Grap - Min": "- MINIMA ROLAGEM DA FRENTE  durante a volta toda",
-    "25_Roll_Front_Grap - Max": "- MÁXIMA ROLAGEM DA FRENTE  durante a volta toda",
-    "25_Roll_Front_Grap - Avg": "- MÉDIA DE ROLAGEM DA FRENTE  durante a volta toda",
-    "25_Roll_Front_Left - Max": "- MÁXIMA ROLAGEM da DIANTEIRA em curvas para ESQUERDA na volta",
-    "25_Roll_Front_Left - Avg": "- MÉDIA de ROLAGEM da DIANTEIRA em curvas para ESQUERDA na volta",
-    "25_Roll_Front_Right - Max": "- MÁXIMA ROLAGEM da DIANTEIRA em curvas para DIREITA na volta",
-    "25_Roll_Front_Right - Avg": "- MÉDIA de ROLAGEM da DIANTEIRA em curvas para DIREITA na volta",
-    "25_Roll_Rear_Grap - Max": "- MÁXIMA ROLAGEM DA TRASEIRA  durante a volta toda",
-    "25_Roll_Rear_Grap - Avg": "- MÉDIA DE ROLAGEM DA TRASEIRA  durante a volta toda",
-    "25_Roll_Rear_Left - Max": "- MÁXIMA ROLAGEM da TRASEIRA em curvas para ESQUERDA na volta",
-    "25_Roll_Rear_Left - Avg": "- MÉDIA de ROLAGEM da TRASEIRA em curvas para ESQUERDA na volta",
-    "25_Roll_Rear_Right - Max": "- MÁXIMA ROLAGEM da TRASEIRA em curvas para DIREITA na volta",
-    "25_Roll_Rear_Right - Avg": "- MÉDIA de ROLAGEM da TRASEIRA em curvas para DIREITA na volta",
+    "24_Expected_Rear_Wheel_Speeds_Difference - Min": "-  Minima diferença entre as velocidades de rodas traseiras esperada durante a volta",
+    "24_Expected_Rear_Wheel_Speeds_Difference - Max": "-  Máxima diferença entre as velocidades de rodas traseiras esperada durante a volta",
+    "24_Expected_Rear_Wheel_Speeds_Difference - Avg": "-  Média de diferença entre as velocidades de rodas traseiras esperada durante a volta",
+    "24_Rear_Wheels_Slips_Difference - Min": "- Minima diferença entre os SLIPS das rodas traseiras esperada durante a volta",
+    "24_Rear_Wheels_Slips_Difference - Max": "- Máxima diferença entre os SLIPS das rodas traseiras esperada durante a volta",
+    "24_Rear_Wheels_Slips_Difference - Avg": "- Média de diferença entre os SLIPS das rodas traseiras esperada durante a volta",
+    "25_AcLat_Trigger - Min": "- VALOR MÍNIMO DO G LATERAL. Analisa os pontos de entrada em curva",
+    "25_AcLat_Trigger - Max": "- VALOR MÁXIMO DO G LATERAL. Analisa os pontos de entrada em curva",
+    "25_AcLat_Trigger - Avg": "- MÉDIA DO TRIGGER DE G LATERAL. Analisa o quanto o piloto é agressivo na entrada de curva",
+    "25_AcLong_Trigger_Positivo - Min": "- VALOR MÍNIMO DE G LONGITUDINAL POSITIVO (ACELERAÇÃO). Analisa agressividade na saída de curva",
+    "25_AcLong_Trigger_Positivo - Max": "- VALOR MÁXIMO DE G LONGITUDINAL POSITIVO (ACELERAÇÃO). Analisa agressividade na saída de curva",
+    "25_AcLong_Trigger_Positivo - Avg": "- MÉDIA DO TRIGGER DE G LONGITUDINAL POSITIVO (ACELERAÇÃO). Analisa agressividade na saída de curva",
+    "25_AcLong_Trigger_Negativo - Min": "- VALOR MÍNIMO DE G LONGITUDINAL NEGATIVO (FRENAGEM). Analisa agressividade de frenagem",
+    "25_AcLong_Trigger_Negativo - Max": "- VALOR MÁXIMO DE G LONGITUDINAL NEGATIVO (FRENAGEM). Analisa agressividade de frenagem",
+    "25_AcLong_Trigger_Negativo - Avg": "- MÉDIA DO TRIGGER DE G LONGITUDINAL NEGATIVO (FRENAGEM). Analisa agressividade de frenagem",
+    "25_Steer_DeadZone_Left - Min": "- ZONA MORTA DE STEER NA ESQUERDA (MIN). Quanto maior, mais o piloto está mexendo pouco o volante",
+    "25_Steer_DeadZone_Left - Max": "- ZONA MORTA DE STEER NA ESQUERDA (MAX). Quanto maior, mais o piloto está mexendo pouco o volante",
+    "25_Steer_DeadZone_Left - Avg": "- ZONA MORTA DE STEER NA ESQUERDA (MÉDIA). Quanto maior, mais o piloto está mexendo pouco o volante",
+    "25_Steer_DeadZone_Right - Min": "- ZONA MORTA DE STEER NA DIREITA (MIN). Quanto maior, mais o piloto está mexendo pouco o volante",
+    "25_Steer_DeadZone_Right - Max": "- ZONA MORTA DE STEER NA DIREITA (MAX). Quanto maior, mais o piloto está mexendo pouco o volante",
+    "25_Steer_DeadZone_Right - Avg": "- ZONA MORTA DE STEER NA DIREITA (MÉDIA). Quanto maior, mais o piloto está mexendo pouco o volante",
+    "25_Steer_Scrub - Min": "- STEER SCRUB (MIN). Analisa o quanto o pneu está arrastando",
+    "25_Steer_Scrub - Max": "- STEER SCRUB (MAX). Analisa o quanto o pneu está arrastando",
+    "25_Steer_Scrub - Avg": "- STEER SCRUB (MÉDIA). Analisa o quanto o pneu está arrastando",
+    "24_Steer_Speed - Min": "- VELOCIDADE DE STEER (MIN). Analisa o quanto rápido o piloto gira o volante",
+    "24_Steer_Speed - Max": "- VELOCIDADE DE STEER (MAX). Analisa o quanto rápido o piloto gira o volante",
+    "24_Steer_Speed - Avg": "- VELOCIDADE DE STEER (MÉDIA). Analisa o quanto rápido o piloto gira o volante",
+    "24_Lateral_Speed - Min": "- VELOCIDADE LATERAL (MIN). Analisa quão rápido o carro se movimenta lateralmente",
+    "24_Lateral_Speed - Max": "- VELOCIDADE LATERAL (MAX). Analisa quão rápido o carro se movimenta lateralmente",
+    "24_Lateral_Speed - Avg": "- VELOCIDADE LATERAL (MÉDIA). Analisa quão rápido o carro se movimenta lateralmente",
+    "24_Oversteer_Index - Min": "- ÍNDICE DE OVERSTEER (MIN)",
+    "24_Oversteer_Index - Max": "- ÍNDICE DE OVERSTEER (MAX)",
+    "24_Oversteer_Index - Avg": "- ÍNDICE DE OVERSTEER (MÉDIA)",
+    "24_Understeer_Index - Min": "- ÍNDICE DE UNDERSTEER (MIN)",
+    "24_Understeer_Index - Max": "- ÍNDICE DE UNDERSTEER (MAX)",
+    "24_Understeer_Index - Avg": "- ÍNDICE DE UNDERSTEER (MÉDIA)",
+    "24_Bottoming_Index - Min": "- ÍNDICE DE BATIDA DE FUNDO (MIN)",
+    "24_Bottoming_Index - Max": "- ÍNDICE DE BATIDA DE FUNDO (MAX)",
+    "24_Bottoming_Index - Avg": "- ÍNDICE DE BATIDA DE FUNDO (MÉDIA)",
+    "25_Rake_Mean - Min": "- MINIMO RAKE atingido durante a volta, quanto MENOR, MAIS RAKE",
+    "25_Rake_Mean - Max": "- MÁXIMO RAKE atingido durante a volta, quanto MENOR, MAIS RAKE",
+    "25_Rake_Mean - Avg": "- MÉDIA de RAKE atingido durante a volta, quanto MENOR, MAIS RAKE",
     "25_Rake_Aero - Min": "- MINIMO RAKE atingido durante a volta EM RETA, quanto MENOR, MAIS RAKE",
     "25_Rake_Aero - Max": "- MÁXIMO RAKE atingido durante a volta EM RETA, quanto MENOR, MAIS RAKE",
     "25_Rake_Aero - Avg": "- MÉDIA de RAKE atingido durante a volta EM RETA, quanto MENOR, MAIS RAKE",
@@ -531,59 +532,94 @@ LEGEND_LABELS = {
     "Roll_Gradiente_Rear - Avg": "- QUANTO MAIOR MAIS MACIO, analisar mudanças de molas e ARB na TRASEIRA",
 }
 
-# Normalizar legendas
+# Versões normalizadas das chaves (para casar com nomes tratados)
 LEGEND_LABELS_NORMALIZED = {}
 for k, v in LEGEND_LABELS.items():
-    norm = _normalize(k)
-    LEGEND_LABELS_NORMALIZED[norm] = v
+    LEGEND_LABELS_NORMALIZED[_normalize(k)] = v
 LEGEND_LABELS.update(LEGEND_LABELS_NORMALIZED)
 
 
 def draw_line(df_plot, y_col, color_col, legend_title):
+    # Ordena
     df_plot = _order(df_plot)
+
+    # Materializa série Y
     y_series, y_title, extra = materialize_metric_series(df_plot, y_col)
     df_plot = df_plot.copy()
     df_plot["__y__"] = y_series
 
+    # Decide legenda fixa pelo nome da métrica
     legend_custom = LEGEND_LABELS.get(y_col)
     if not legend_custom:
         legend_custom = LEGEND_LABELS.get(_normalize(y_col))
 
+    # Eixo X
     x_vals  = df_plot['XKey'].tolist()
     x_texts = df_plot['XLabel'].tolist()
     tickvals, ticktext = sample_ticks(x_vals, x_texts, max_ticks=30)
 
+    # Colunas extras para hover
     custom_cols = [lap_col, sessionname_col, trackname_col, 'XLabel']
     if "comment_text" in extra:
-        df_plot["__comment__"] = extra["comment_text"]; custom_cols.append("__comment__")
+        df_plot["__comment__"] = extra["comment_text"]
+        custom_cols.append("__comment__")
     if "category_text" in extra:
-        df_plot["__category__"] = extra["category_text"]; custom_cols.append("__category__")
+        df_plot["__category__"] = extra["category_text"]
+        custom_cols.append("__category__")
 
-    fig = px.line(df_plot, x='XKey', y="__y__", color=color_col, markers=True,
-                  title=y_title, custom_data=custom_cols)
+    # Figura
+    fig = px.line(
+        df_plot,
+        x='XKey',
+        y="__y__",
+        color=color_col,
+        markers=True,
+        title=y_title,
+        custom_data=custom_cols,
+    )
 
+    # Aplica legenda fixa (se existir)
     if legend_custom:
         fig.update_layout(legend_title_text=legend_custom)
+        # Força todos os traces a terem o MESMO nome -> só aparece 1 entrada
         for tr in fig.data:
             tr.name = legend_custom
     else:
         fig.update_layout(legend_title_text=legend_title)
 
+    # Hover
     fig.update_traces(hovertemplate=hover_template_for(
-        y_title, "comment_text" in extra, "category_text" in extra
+        y_title,
+        "comment_text" in extra,
+        "category_text" in extra
     ))
-    fig.update_layout(title_font=dict(size=40, color="white"), height=600,
-                      legend=legend_right)
-    fig.update_xaxes(type='category', categoryorder='array', categoryarray=list(dict.fromkeys(x_vals)),
-                     tickmode='array', tickvals=tickvals, ticktext=ticktext, title=None)
 
+    # Layout geral
+    fig.update_layout(
+        title_font=dict(size=40, color="white"),
+        height=600,
+        legend=legend_right,
+    )
+    fig.update_xaxes(
+        type='category',
+        categoryorder='array',
+        categoryarray=list(dict.fromkeys(x_vals)),
+        tickmode='array',
+        tickvals=tickvals,
+        ticktext=ticktext,
+        title=None,
+    )
+
+    # Caso categórico
     if "category_map" in extra:
         name_to_code = extra["category_map"]
-        fig.update_yaxes(tickmode="array",
-                         tickvals=list(name_to_code.values()),
-                         ticktext=list(name_to_code.keys()))
-    return fig, df_plot
+        fig.update_yaxes(
+            tickmode="array",
+            tickvals=list(name_to_code.values()),
+            ticktext=list(name_to_code.keys()),
+        )
 
+    return fig, df_plot
 
 # =========================
 # Defaults iniciais (sem escopo global)
@@ -829,4 +865,3 @@ else:
             st.info("Sem dados válidos de LapTime para compor a planilha.")
         else:
             st.dataframe(sheet, use_container_width=True)
-
