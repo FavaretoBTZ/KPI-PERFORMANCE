@@ -445,7 +445,7 @@ def hover_template_for(metric_title: str, has_comment: bool, has_category: bool)
     return "".join(parts) + "<extra></extra>"
 
 # =========================
-# LEGENDAS FIXAS (AUTOGERADAS DA WINTAX)
+# LEGENDAS FIXAS WINTAX
 # =========================
 LEGEND_LABELS = {
     "Brake_Efficiency - Max": "- Quanto MAIOR melhor",
@@ -531,6 +531,13 @@ LEGEND_LABELS = {
     "Roll_Gradiente_Rear - Avg": "- QUANTO MAIOR MAIS MACIO, analisar mudanças de molas e ARB na TRASEIRA",
 }
 
+# Normalizar legendas
+LEGEND_LABELS_NORMALIZED = {}
+for k, v in LEGEND_LABELS.items():
+    norm = _normalize(k)
+    LEGEND_LABELS_NORMALIZED[norm] = v
+LEGEND_LABELS.update(LEGEND_LABELS_NORMALIZED)
+
 
 def draw_line(df_plot, y_col, color_col, legend_title):
     df_plot = _order(df_plot)
@@ -538,7 +545,9 @@ def draw_line(df_plot, y_col, color_col, legend_title):
     df_plot = df_plot.copy()
     df_plot["__y__"] = y_series
 
-    legend_custom = LEGEND_LABELS.get(y_col, None)
+    legend_custom = LEGEND_LABELS.get(y_col)
+    if not legend_custom:
+        legend_custom = LEGEND_LABELS.get(_normalize(y_col))
 
     x_vals  = df_plot['XKey'].tolist()
     x_texts = df_plot['XLabel'].tolist()
