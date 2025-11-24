@@ -543,6 +543,7 @@ def hover_template_for(metric_title: str, has_comment: bool, has_category: bool)
     return "".join(parts) + "<extra></extra>"
 
 
+
 def draw_line(df_plot, y_col, color_col, legend_title):
     df_plot = _order(df_plot)
     y_series, y_title, extra = materialize_metric_series(df_plot, y_col)
@@ -572,24 +573,22 @@ def draw_line(df_plot, y_col, color_col, legend_title):
     ))
 
     if legend_custom:
-        # sem legenda de cores; apenas texto explicativo embaixo do gráfico
+        # OPÇÃO B:
+        #   - Remove legenda de cores
+        #   - Mostra o texto explicativo como SUBTÍTULO do gráfico, logo abaixo do título
         fig.update_layout(
             showlegend=False,
+            title=dict(
+                text=f"{y_title}<br><sup>{legend_custom}</sup>",
+                x=0.5,
+                xanchor="center"
+            ),
             title_font=dict(size=40, color="white"),
             height=600,
-            margin=dict(t=80, b=110, l=80, r=20),
-        )
-        fig.add_annotation(
-            text=legend_custom,
-            xref="paper", yref="paper",
-            x=0.5, y=-0.20,
-            showarrow=False,
-            xanchor="center", yanchor="top",
-            font=dict(size=13, color="white"),
-            align="center"
+            margin=dict(t=110, b=60, l=80, r=20),
         )
     else:
-        # comportamento original com legenda lateral
+        # Sem legenda fixa cadastrada -> mantém comportamento padrão com legenda lateral
         fig.update_layout(
             title_font=dict(size=40, color="white"),
             height=600,
@@ -618,6 +617,7 @@ def draw_line(df_plot, y_col, color_col, legend_title):
         )
 
     return fig, df_plot
+
 
 
 # =========================
