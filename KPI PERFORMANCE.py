@@ -733,6 +733,12 @@ def hover_template_for(metric_title: str, has_comment: bool, has_category: bool)
     return "".join(parts) + "<extra></extra>"
 
 
+
+# helper
+import re
+def base_no_suffix_local(s: str):
+    return re.sub(r"( min| max| avg| mean| median| info)$", "", s)
+
 def draw_line(df_plot, y_col, color_col, legend_title):
     df_plot = _order(df_plot)
     y_series, y_title, extra = materialize_metric_series(df_plot, y_col)
