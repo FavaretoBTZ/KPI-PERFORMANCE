@@ -13,25 +13,6 @@ METRIC_BLACKLIST = {
     "ELB_TotalKm - Info",
 }
 
-# ============================================================
-# LEGENDAS DAS MÉTRICAS (FIXAS)
-# ============================================================
-METRIC_HELP = {
-    "LapTime - Info": "Quanto menor, melhor (volta mais rápida).",
-}
-
-def get_metric_help(metric_name: str) -> str:
-    if not metric_name:
-        return ""
-    if metric_name in METRIC_HELP:
-        return METRIC_HELP[metric_name]
-    n = _normalize(metric_name)
-    for k,v in METRIC_HELP.items():
-        if _normalize(k)==n:
-            return v
-    return ""
-
-
 # =========================
 # Regex global (precisa estar antes de funções que usam)
 # =========================
@@ -463,11 +444,48 @@ def hover_template_for(metric_title: str, has_comment: bool, has_category: bool)
         parts.append(f"<br><b>Tire - Info</b>: %{{customdata[{idx + (1 if has_comment else 0)}]}}")
     return "".join(parts) + "<extra></extra>"
 
+
+# =========================
+# LEGENDAS FIXAS POR MÉTRICA (WINTAX, linha 2)
+# =========================
+LEGEND_LABELS = {
+    "Ac.Lat - Min": "- VALOR MÍNIMO DO G LATERAL ATINGIDO, ANALISAR TOQUES/AGRESSIVIDADE/ERROS DO PILOTO E EQUILÍBRIO GERAL DO CARRO",
+    "Ac.Lat - Max": "- VALOR MÁXIMO DO G LATERAL ATINGIDO, ANALISAR AGRESSIVIDADE, LIMITES DO PILOTO, AERODINÂMICA E MECÂNICA",
+    "Ac.Lat - Avg": "- MÉDIA DO G LATERAL, OBSERVAR O COMPORTAMENTO DO PILOTO CURVA-A-CURVA E BALANCEAMENTO DO CARRO",
+    "Ac.Long - Min": "- VALOR MÍNIMO DO G LONGITUDINAL (FRENAGEM), ANALISAR TÉCNICA DE FREIO E ESTABILIDADE",
+    "Ac.Long - Max": "- VALOR MÁXIMO DO G LONGITUDINAL (FRENAGEM/ACELERAÇÃO), OBSERVAR NÍVEL DE AGRESSIVIDADE E LIMITES DO CARRO",
+    "Ac.Long - Avg": "- MÉDIA DO G LONGITUDINAL, AJUDA A ENTENDER A DISTRIBUIÇÃO DE FREIO E ACELERAÇÃO AO LONGO DA VOLTA",
+    "G_Comb -Max": "- MAIOR VALOR DO G COMBINADO, IDENTIFICAR LIMITES MÁXIMOS DE ADERÊNCIA",
+    "G_Comb -Avg": "- MÉDIA DO G COMBINADO, ÚTIL PARA AVALIAR ESTABILIDADE GERAL DO CARRO",
+    "25_AcLat_Trigger -Avg": "- MÉDIA DO TRIGGER LATERAL (ENTRADA DE CURVA), INDICATIVO DA VELOCIDADE E AGRESSIVIDADE NO TURN-IN",
+    "25_AcLong_Trigger_Positivo -Avg": "- MÉDIA DO TRIGGER LONGITUDINAL POSITIVO (ACELERAÇÃO), AVALIA A SAÍDA DE CURVA E TRACIONAMENTO",
+    "25_AcLong_Trigger_Negativo -Avg": "- MÉDIA DO TRIGGER LONGITUDINAL NEGATIVO (FRENAGEM), AVALIA A EFICIÊNCIA E CONSISTÊNCIA DA FRENAGEM",
+    "CarSpeed -Avg": "- MÉDIA DA VELOCIDADE, VERIFICAR CONSISTÊNCIA E MOMENTUM AO LONGO DAS VOLTAS",
+    "Total_Brake -Max": "- MÁXIMO DE APLICAÇÃO DE FREIO, OBSERVAR CONDIÇÃO DE PISTA E AGRESSIVIDADE",
+    "Total_Brake -Avg": "- MÉDIA DA APLICAÇÃO DE FREIO, ANALISAR PADRÕES E EVOLUÇÃO DO PILOTO",
+    "BrakeAgression -Max": "- MÁXIMA AGRESSÃO NO PEDAL DE FREIO, AVALIAR RISCO DE BLOCAGEM E NÍVEL DE ATAQUE",
+    "BrakeAgression -Avg": "- MÉDIA DA AGRESSÃO DE FREIO, ÚTIL PARA COMPARAR CONSISTÊNCIA ENTRE VOLTAS",
+    "Full_Brake_intg -Max": "- INTEGRAÇÃO MÁXIMA DA FREIADA, ANALISAR ESTABILIDADE E EFICIÊNCIA DO FREIO",
+    "rPedal -Avg": "- MÉDIA DO PEDAL DE ACELERAÇÃO (rPedal), INDICADOR DIRETO DE AGRESSIVIDADE DE SAÍDA DE CURVA",
+    "24_ThrottleAgression -Max": "- MÁXIMA AGRESSÃO NO ACELERADOR, INDICA RISCO DE PERDA DE TRAÇÃO",
+    "24_ThrottleAgression -Avg": "- MÉDIA DA AGRESSÃO NO ACELERADOR, MEDIDA DE CONSISTÊNCIA E CONTROLE",
+    "Full_throttle_intg -Max": "- INTEGRAÇÃO MÁXIMA DO ACELERADOR, VERIFICAR POTENCIAL DE PERFORMANCE EM RETAS",
+    "25_CrossingTime -Avg": "- TEMPO MÉDIO DE CRUZAMENTO DE CURVA, AVALIA PRECISÃO DO PILOTO",
+    "25_CoastingTime -Avg": "- TEMPO MÉDIO COASTING (SEM FREIO/ACELERAÇÃO), ÚTIL PARA ENTENDER BALANCEAMENTO E DESCONFORTO DO PILOTO",
+    "24_Downforce_Distr_Front - Max": "- MAIOR DISTRIBUIÇÃO DE DOWNFORCE ATINGIDA NA FRENTE",
+    "24_Downforce_Distr_Front - Avg": "- MÉDIA DA DISTRIBUIÇÃO DE DOWNFORCE NA FRENTE",
+    "Roll_Gradiente_Front - Avg": "- QUANTO MAIOR MAIS MACIO, ANALISAR MUDANÇAS DE COMPORTAMENTO NO EIXO DIANTEIRO",
+    "Roll_Gradiente_Rear - Avg": "- QUANTO MAIOR MAIS MACIO, ANALISAR MUDANÇAS DE COMPORTAMENTO NO EIXO TRASEIRO",
+}
+
+
 def draw_line(df_plot, y_col, color_col, legend_title):
     df_plot = _order(df_plot)
     y_series, y_title, extra = materialize_metric_series(df_plot, y_col)
     df_plot = df_plot.copy()
     df_plot["__y__"] = y_series
+
+    legend_custom = LEGEND_LABELS.get(y_col, None)
 
     x_vals  = df_plot['XKey'].tolist()
     x_texts = df_plot['XLabel'].tolist()
@@ -482,11 +500,18 @@ def draw_line(df_plot, y_col, color_col, legend_title):
     fig = px.line(df_plot, x='XKey', y="__y__", color=color_col, markers=True,
                   title=y_title, custom_data=custom_cols)
 
+    if legend_custom:
+        fig.update_layout(legend_title_text=legend_custom)
+        for tr in fig.data:
+            tr.name = legend_custom
+    else:
+        fig.update_layout(legend_title_text=legend_title)
+
     fig.update_traces(hovertemplate=hover_template_for(
         y_title, "comment_text" in extra, "category_text" in extra
     ))
     fig.update_layout(title_font=dict(size=40, color="white"), height=600,
-                      legend=legend_right, legend_title_text=legend_title)
+                      legend=legend_right)
     fig.update_xaxes(type='category', categoryorder='array', categoryarray=list(dict.fromkeys(x_vals)),
                      tickmode='array', tickvals=tickvals, ticktext=ticktext, title=None)
 
@@ -496,6 +521,7 @@ def draw_line(df_plot, y_col, color_col, legend_title):
                          tickvals=list(name_to_code.values()),
                          ticktext=list(name_to_code.keys()))
     return fig, df_plot
+
 
 # =========================
 # Defaults iniciais (sem escopo global)
@@ -589,8 +615,7 @@ def graph_card(i: int, base_df: pd.DataFrame):
     if cmp_cfg is None:
         df_g = base_df.copy()
         fig, used = draw_line(df_g, y_i, sessionname_col, "SessionName")
-        help_text = get_metric_help(y_i)
-        return fig, used, y_i, help_text
+        return fig, used, y_i
     else:
         dA, mA, sA, dB, mB, sB = cmp_cfg
         df_A = _apply_filters(base_df.copy(), dA, mA, sA) if dA else base_df.iloc[0:0].copy()
@@ -602,13 +627,9 @@ def graph_card(i: int, base_df: pd.DataFrame):
             return d
         df_cmp = pd.concat([add_group(df_A, dA or ""), add_group(df_B, dB or "")], ignore_index=True)
         fig, used = draw_line(df_cmp, y_i, "DriverSessionGroup", "Driver / Session")
-        help_text = get_metric_help(y_i)
-        return fig, used, y_i, help_text
+        return fig, used, y_i
 
-def hover_and_stats(fig_obj, df_used, y_used)
-
-        if help_text:
-            st.caption(help_text):
+def hover_and_stats(fig_obj, df_used, y_used):
     if df_used is not None and y_used is not None:
         ys, _, _ = materialize_metric_series(df_used, y_used)
         vec = pd.to_numeric(ys, errors='coerce')
@@ -627,15 +648,11 @@ for row_start in range(0, 9, 3):
         slot_idx = row_start + j + 1  # 1..9
         if slot_idx <= 8:
             with cols[j]:
-                fig_obj, df_used, y_used, help_text = graph_card(slot_idx, base)
+                fig_obj, df_used, y_used = graph_card(slot_idx, base)
                 st.plotly_chart(fig_obj, use_container_width=True,
                                 key=f"plot_{slot_idx}_{row_start}_{j}_{plot_counter}")
                 hover_and_stats(fig_obj, df_used, y_used)
-
-        if help_text:
-            st.caption(help_text)
-
-        plot_counter += 1
+                plot_counter += 1
         elif slot_idx == 9:
             with cols[j]:
                 st.subheader("Dispersão (G9)")
