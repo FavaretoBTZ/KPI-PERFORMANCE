@@ -563,8 +563,8 @@ def draw_line(df_plot, y_col, color_col, legend_title):
     if "category_text" in extra:
         df_plot["__category__"] = extra["category_text"]; custom_cols.append("__category__")
 
-    fig = px.line(
-        df_plot, x='XKey', y="__y__", color=color_col, markers=True,
+    fig = px.scatter(
+        df_plot, x='XKey', y="__y__", color=color_col,
         title=y_title, custom_data=custom_cols
     )
 
@@ -779,10 +779,11 @@ for row_start in range(0, 9, 3):
                     df_disp = df.copy()
                     y_series, y_title, _ = materialize_metric_series(df_disp, y_col)
                     df_disp["__y__"] = y_series
-                    fig_disp = px.line(
+                    fig_disp = px.scatter(
                         df_disp, x=x_col, y="__y__",
                         color=sessionname_col if sessionname_col in df.columns else None,
-                        title=f"{x_disp} vs {y_title}", markers=True)
+                        title=f"{x_disp} vs {y_title}"
+                    )
                     fig_disp.update_layout(title_font=dict(size=40, color="white"), height=600, legend=legend_right)
                     st.plotly_chart(fig_disp, use_container_width=True, key="plot_disp")
                 else:
