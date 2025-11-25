@@ -1,3 +1,4 @@
+legend_right = dict(x=1.02, y=1, bgcolor='rgba(0,0,0,0)')
 import streamlit as st
 import pandas as pd
 import plotly.express as px
