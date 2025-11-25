@@ -564,7 +564,8 @@ def draw_line(df_plot, y_col, color_col, legend_title):
         df_plot["__category__"] = extra["category_text"]; custom_cols.append("__category__")
 
     fig = px.scatter(
-        df_plot, x='XKey', y="__y__", color=color_col,
+    fig.update_traces(mode="markers")
+        df_plot, x='XKey', y="__y__", color=color_col, markers=True,
         title=y_title, custom_data=custom_cols
     )
 
