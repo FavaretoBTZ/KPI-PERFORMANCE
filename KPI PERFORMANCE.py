@@ -564,10 +564,10 @@ def draw_line(df_plot, y_col, color_col, legend_title):
         df_plot["__category__"] = extra["category_text"]; custom_cols.append("__category__")
 
     fig = px.scatter(
+    fig.update_traces(mode="markers")
         df_plot, x='XKey', y="__y__", color=color_col, markers=True,
         title=y_title, custom_data=custom_cols
     )
-fig.update_traces(mode='markers')
 
     fig.update_traces(hovertemplate=hover_template_for(
         y_title, "comment_text" in extra, "category_text" in extra
