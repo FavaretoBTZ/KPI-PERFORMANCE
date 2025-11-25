@@ -1,4 +1,3 @@
-legend_right = dict(x=1.02, y=1, bgcolor='rgba(0,0,0,0)')
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -545,7 +544,79 @@ def hover_template_for(metric_title: str, has_comment: bool, has_category: bool)
 
 
 
+def draw_line(df_plot, y_col, color_col, legend_title):
+    df_plot = _order(df_plot)
+    y_series, y_title, extra = materialize_metric_series(df_plot, y_col)
+    df_plot = df_plot.copy()
+    df_plot["__y__"] = y_series
 
+    # legenda fixa (se existir para esta métrica)
+    legend_custom = get_metric_legend(y_col)
+
+    x_vals  = df_plot['XKey'].tolist()
+    x_texts = df_plot['XLabel'].tolist()
+    tickvals, ticktext = sample_ticks(x_vals, x_texts, max_ticks=30)
+
+    custom_cols = [lap_col, sessionname_col, trackname_col, 'XLabel']
+    if "comment_text" in extra:
+        df_plot["__comment__"] = extra["comment_text"]; custom_cols.append("__comment__")
+    if "category_text" in extra:
+        df_plot["__category__"] = extra["category_text"]; custom_cols.append("__category__")
+
+    fig = px.scatter(
+        df_plot, x='XKey', y="__y__", color=color_col,
+        title=y_title, custom_data=custom_cols
+    )
+
+    fig.update_traces(hovertemplate=hover_template_for(
+        y_title, "comment_text" in extra, "category_text" in extra
+    ))
+
+    if legend_custom:
+        # OPÇÃO B:
+        #   - Remove legenda de cores
+        #   - Mostra o texto explicativo como SUBTÍTULO do gráfico, logo abaixo do título
+        fig.update_layout(
+            showlegend=False,
+            title=dict(
+                text=f"{y_title}<br><sup>{legend_custom}</sup>",
+                x=0.5,
+                xanchor="center"
+            ),
+            title_font=dict(size=40, color="white"),
+            height=600,
+            margin=dict(t=110, b=60, l=80, r=20),
+        )
+    else:
+        # Sem legenda fixa cadastrada -> mantém comportamento padrão com legenda lateral
+        fig.update_layout(
+            title_font=dict(size=40, color="white"),
+            height=600,
+            legend=legend_right,
+            legend_title_text=legend_title,
+            margin=dict(t=80, b=40, l=80, r=260),
+            showlegend=True,
+        )
+
+    fig.update_xaxes(
+        type='category',
+        categoryorder='array',
+        categoryarray=list(dict.fromkeys(x_vals)),
+        tickmode='array',
+        tickvals=tickvals,
+        ticktext=ticktext,
+        title=None
+    )
+
+    if "category_map" in extra:
+        name_to_code = extra["category_map"]
+        fig.update_yaxes(
+            tickmode="array",
+            tickvals=list(name_to_code.values()),
+            ticktext=list(name_to_code.keys())
+        )
+
+    return fig, df_plot
 
 
 
@@ -795,89 +866,3 @@ else:
             st.dataframe(sheet, use_container_width=True)
 
 
-
-
-
-def draw_line(df_plot, y_col, color_col, legend_title):
-    df_plot = _order(df_plot)
-
-    y_series, y_title, extra = materialize_metric_series(df_plot, y_col)
-    df_plot = df_plot.copy()
-    df_plot["__y__"] = y_series
-
-    legend_custom = get_metric_legend(y_col)
-
-    x_vals  = df_plot['XKey'].tolist()
-    x_texts = df_plot['XLabel'].tolist()
-    tickvals, ticktext = sample_ticks(x_vals, x_texts, max_ticks=30)
-
-    custom_cols = [lap_col, sessionname_col, trackname_col, 'XLabel']
-
-    if "comment_text" in extra:
-        df_plot["__comment__"] = extra["comment_text"]
-        custom_cols.append("__comment__")
-
-    if "category_text" in extra:
-        df_plot["__category__"] = extra["category_text"]
-        custom_cols.append("__category__")
-
-    fig = px.scatter(
-        df_plot,
-        x='XKey',
-        y="__y__",
-        color=color_col,
-        title=y_title,
-        custom_data=custom_cols
-    )
-
-    fig.update_traces(mode="markers")
-
-    fig.update_traces(
-        hovertemplate=hover_template_for(
-            y_title,
-            "comment_text" in extra,
-            "category_text" in extra
-        )
-    )
-
-    if legend_custom:
-        fig.update_layout(
-            showlegend=False,
-            title=dict(
-                text=f"{y_title}<br><sup>{legend_custom}</sup>",
-                x=0.5,
-                xanchor="center"
-            ),
-            title_font=dict(size=40, color="white"),
-            height=600,
-            margin=dict(t=110, b=60, l=80, r=20),
-        )
-    else:
-        fig.update_layout(
-            title_font=dict(size=40, color="white"),
-            height=600,
-            legend=legend_right,
-            legend_title_text=legend_title,
-            margin=dict(t=80, b=40, l=80, r=260),
-            showlegend=True,
-        )
-
-    fig.update_xaxes(
-        type='category',
-        categoryorder='array',
-        categoryarray=x_vals,
-        tickmode='array',
-        tickvals=tickvals,
-        ticktext=ticktext,
-        title=None
-    )
-
-    if "category_map" in extra:
-        name_to_code = extra["category_map"]
-        fig.update_yaxes(
-            tickmode="array",
-            tickvals=list(name_to_code.values()),
-            ticktext=list(name_to_code.keys())
-        )
-
-    return fig, df_plot
