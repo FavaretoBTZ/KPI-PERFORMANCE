@@ -563,8 +563,8 @@ def draw_line(df_plot, y_col, color_col, legend_title):
     if "category_text" in extra:
         df_plot["__category__"] = extra["category_text"]; custom_cols.append("__category__")
 
-    fig = px.line(
-        df_plot, x='XKey', y="__y__", color=color_col, markers=True,
+    fig = px.scatter(
+        df_plot, x='XKey', y="__y__", color=color_col,
         title=y_title, custom_data=custom_cols
     )
 
@@ -864,4 +864,5 @@ else:
             st.info("Sem dados válidos de LapTime para compor a planilha.")
         else:
             st.dataframe(sheet, use_container_width=True)
+
 
